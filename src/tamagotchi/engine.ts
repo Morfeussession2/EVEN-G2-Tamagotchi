@@ -1,0 +1,238 @@
+import type { PetStage, TamagotchiActionResult, TamagotchiState } from './types';
+
+const STORAGE_KEY = 'even_tamagotchi_state_v1';
+const MAX_HUNGER = 4;
+const MAX_HAPPINESS = 4;
+const MAX_POOP = 3;
+const MIN_HEALTH = 0;
+const MAX_HEALTH = 100;
+const MAX_NAME_LENGTH = 12;
+
+const clamp = (value: number, min: number, max: number): number =>
+    Math.min(max, Math.max(min, value));
+
+const sanitizeName = (value: string): string => {
+    const normalized = value.trim().replace(/\s+/g, ' ');
+    if (!normalized) return 'G2 PET';
+    return normalized.slice(0, MAX_NAME_LENGTH);
+};
+
+const resolveStage = (ageMinutes: number): PetStage => {
+    // Regras solicitadas:
+    // egg -> baby: 1h (60 min)
+    // baby -> teen: 24h adicionais (1440 min)
+    // teen -> adult: 72h adicionais (4320 min)
+    if (ageMinutes < 60) return 'egg';
+    if (ageMinutes < 1500) return 'baby';
+    if (ageMinutes < 5820) return 'teen';
+    return 'adult';
+};
+
+const makeInitialState = (): TamagotchiState => ({
+    petName: 'G2 PET',
+    hunger: 1,
+    happiness: 3,
+    poop: 0,
+    ageMinutes: 0,
+    weight: 5,
+    health: 90,
+    stage: 'egg',
+    isSick: false,
+    isAlive: true,
+    lastTickAt: Date.now(),
+});
+
+export class TamagotchiEngine {
+    private state: TamagotchiState;
+
+    constructor() {
+        this.state = this.loadState();
+        this.syncWithClock();
+    }
+
+    getState(): TamagotchiState {
+        return { ...this.state };
+    }
+
+    syncWithClock(now = Date.now()): TamagotchiState {
+        const elapsedMs = now - this.state.lastTickAt;
+        const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+        if (elapsedMinutes > 0) {
+            this.advanceMinutes(elapsedMinutes, now);
+        }
+        return this.getState();
+    }
+
+    tick(now = Date.now()): TamagotchiState {
+        this.advanceMinutes(1, now);
+        return this.getState();
+    }
+
+    fastForward(minutes: number, now = Date.now()): TamagotchiState {
+        this.advanceMinutes(Math.max(0, Math.floor(minutes)), now);
+        return this.getState();
+    }
+
+    resetAgeCache(now = Date.now()): TamagotchiState {
+        this.state.ageMinutes = 0;
+        this.state.health = MAX_HEALTH;
+        this.state.isSick = false;
+        this.state.lastTickAt = now;
+        this.updateDerivedState();
+        this.persist();
+        return this.getState();
+    }
+
+    setPetName(name: string): TamagotchiState {
+        this.state.petName = sanitizeName(name);
+        this.persist();
+        return this.getState();
+    }
+
+    feed(): TamagotchiActionResult {
+        this.state.hunger = clamp(this.state.hunger - 1, 0, MAX_HUNGER);
+        this.state.weight += 1;
+        // Feeding is always a small maintenance heal.
+        this.state.health = clamp(this.state.health + 1, MIN_HEALTH, MAX_HEALTH);
+        this.updateDerivedState();
+        this.persist();
+        return { changed: true, message: 'Pet fed.' };
+    }
+
+    play(): TamagotchiActionResult {
+        const previousHappiness = this.state.happiness;
+        this.state.happiness = clamp(this.state.happiness + 1, 0, MAX_HAPPINESS);
+        const happinessGain = this.state.happiness - previousHappiness;
+        if (happinessGain > 0) {
+            this.state.hunger = clamp(this.state.hunger + happinessGain, 0, MAX_HUNGER);
+        }
+        this.state.weight = clamp(this.state.weight - 1, 1, 99);
+        if (previousHappiness < MAX_HAPPINESS) {
+            this.state.health = clamp(this.state.health + 1, MIN_HEALTH, MAX_HEALTH);
+        }
+        this.updateDerivedState();
+        this.persist();
+        return { changed: true, message: 'Pet played and got happier.' };
+    }
+
+    applyPlaySeriesReward(userWonSeries: boolean): TamagotchiActionResult {
+        const previousHappiness = this.state.happiness;
+        if (userWonSeries) {
+            this.state.happiness = MAX_HAPPINESS;
+        } else {
+            this.state.happiness = clamp(this.state.happiness + 1, 0, MAX_HAPPINESS);
+        }
+        const happinessGain = this.state.happiness - previousHappiness;
+        if (happinessGain > 0) {
+            this.state.hunger = clamp(this.state.hunger + happinessGain, 0, MAX_HUNGER);
+        }
+        this.state.weight = clamp(this.state.weight - 1, 1, 99);
+        this.state.health = clamp(this.state.health + 1, MIN_HEALTH, MAX_HEALTH);
+        this.updateDerivedState();
+        this.persist();
+        return {
+            changed: true,
+            message: userWonSeries
+                ? 'You won 2/3! Happiness maxed.'
+                : 'Pet won. Happiness +1.',
+        };
+    }
+
+    clean(): TamagotchiActionResult {
+        if (this.state.poop === 0) {
+            return { changed: false, message: 'Nothing to clean.' };
+        }
+        this.state.poop = 0;
+        this.state.health = clamp(this.state.health + 4, MIN_HEALTH, MAX_HEALTH);
+        this.updateDerivedState();
+        this.persist();
+        return { changed: true, message: 'Area cleaned.' };
+    }
+
+    medicine(): TamagotchiActionResult {
+        this.state.health = clamp(this.state.health + 15, MIN_HEALTH, MAX_HEALTH);
+        this.state.isSick = false;
+        this.updateDerivedState();
+        this.persist();
+        return { changed: true, message: 'Medicine applied.' };
+    }
+
+    discipline(): TamagotchiActionResult {
+        this.state.happiness = clamp(this.state.happiness - 1, 0, MAX_HAPPINESS);
+        this.state.health = clamp(this.state.health + 2, MIN_HEALTH, MAX_HEALTH);
+        this.updateDerivedState();
+        this.persist();
+        return { changed: true, message: 'Discipline applied.' };
+    }
+
+    private advanceMinutes(minutes: number, now: number): void {
+        for (let i = 0; i < minutes; i += 1) {
+            this.state.ageMinutes += 1;
+            if (this.state.ageMinutes % 3 === 0) {
+                this.state.hunger = clamp(this.state.hunger + 1, 0, MAX_HUNGER);
+            }
+            if (this.state.ageMinutes % 4 === 0) {
+                this.state.happiness = clamp(this.state.happiness - 1, 0, MAX_HAPPINESS);
+            }
+            if (this.state.ageMinutes % 12 === 0) {
+                this.state.poop = clamp(this.state.poop + 1, 0, MAX_POOP);
+            }
+
+            const neglectPenalty =
+                (this.state.hunger >= MAX_HUNGER ? 1 : 0) +
+                (this.state.happiness <= 1 ? 2 : 0) +
+                (this.state.poop >= 2 ? 3 : 0);
+
+            this.state.health = clamp(this.state.health - neglectPenalty, MIN_HEALTH, MAX_HEALTH);
+            // Regeneration rule: empty hunger + max happiness heals the pet.
+            // Use a stronger per-minute recovery so LIFE bar changes are visible.
+            if (this.state.hunger === 0 && this.state.happiness === MAX_HAPPINESS) {
+                this.state.health = clamp(this.state.health + 5, MIN_HEALTH, MAX_HEALTH);
+            }
+            if (this.state.health <= 35) this.state.isSick = true;
+        }
+
+        this.state.lastTickAt = now;
+        this.updateDerivedState();
+        this.persist();
+    }
+
+    private updateDerivedState(): void {
+        this.state.stage = resolveStage(this.state.ageMinutes);
+        // Regra de produto: pet nao morre.
+        this.state.isAlive = true;
+        // Sickness with hysteresis to avoid "stuck sick" behavior:
+        // enters sick at low health, exits once recovered enough.
+        if (this.state.health <= 35) {
+            this.state.isSick = true;
+        } else if (this.state.health >= 45) {
+            this.state.isSick = false;
+        }
+    }
+
+    private loadState(): TamagotchiState {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (!raw) return makeInitialState();
+            const parsed = JSON.parse(raw) as Partial<TamagotchiState>;
+            const nextState: TamagotchiState = {
+                ...makeInitialState(),
+                ...parsed,
+            };
+            nextState.hunger = clamp(nextState.hunger, 0, MAX_HUNGER);
+            nextState.happiness = clamp(nextState.happiness, 0, MAX_HAPPINESS);
+            nextState.poop = clamp(nextState.poop, 0, MAX_POOP);
+            nextState.health = clamp(nextState.health, MIN_HEALTH, MAX_HEALTH);
+            nextState.petName = sanitizeName(nextState.petName ?? '');
+            nextState.isAlive = true;
+            nextState.stage = resolveStage(nextState.ageMinutes);
+            return nextState;
+        } catch {
+            return makeInitialState();
+        }
+    }
+
+    private persist(): void {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+    }
+}

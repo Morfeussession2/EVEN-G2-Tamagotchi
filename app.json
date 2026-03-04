@@ -1,0 +1,22 @@
+{
+    "app_id": 9991238,
+    "package_id": "com.evenrealities.tamagotchi",
+    "name": "Even Tamagotchi",
+    "version": "1.0.0",
+    "description": "Virtual Pet for G2",
+    "entrypoint": "index.html",
+    "entry": "index.html",
+    "os_version": "1.0",
+    "permissions": [
+        "display",
+        "gestures",
+        "notifications"
+    ],
+    "services": [
+        {
+            "id": 1,
+            "type": "background",
+            "name": "pet_engine"
+        }
+    ]
+}

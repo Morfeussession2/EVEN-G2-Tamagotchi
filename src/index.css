@@ -1,0 +1,125 @@
+body {
+    background: #d9d9d9;
+    font-family: 'EvenRoster', sans-serif;
+    margin: 0;
+}
+
+.together-shell {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.top-header h1 {
+    font-family: 'EvenSignature', sans-serif;
+    font-size: 26px;
+    font-weight: normal;
+    margin-bottom: 24px;
+}
+
+.section {
+    margin-bottom: 26px;
+}
+
+.section-title {
+    font-size: 13px;
+    margin-bottom: 10px;
+    color: #333;
+    letter-spacing: 0.5px;
+}
+
+/* ===== CARDS ===== */
+
+.card {
+    background: #ececec;
+    padding: 16px;
+    border-radius: 8px; /* antes 12px */
+    margin-bottom: 12px;
+}
+
+/* ===== LINHAS ===== */
+
+.row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* ===== GRID DETALHES ===== */
+
+.details-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.detail-box {
+    background: #ececec;
+    padding: 14px;
+    border-radius: 8px; /* reduzido */
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.detail-box span {
+    font-size: 11px;
+    color: #555;
+}
+
+.detail-box strong {
+    font-family: 'EvenTime', monospace; /* fonte digital oficial */
+    font-size: 18px;
+}
+
+/* ===== BOTÕES ===== */
+
+.primary-button {
+    background: #e7e07a;
+    border: none;
+    padding: 12px;
+    border-radius: 8px; /* reduzido */
+    font-family: 'EvenRoster';
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.secondary-button {
+    background: #dcdcdc;
+    border: none;
+    padding: 12px;
+    border-radius: 8px; /* reduzido */
+    font-family: 'EvenRoster';
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.button-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* ===== LOG BOX ===== */
+
+.log-box {
+    max-height: 160px;
+    overflow-y: auto;
+    font-size: 12px;
+    font-family: 'EvenTime', monospace;
+}
+/* ===== FONTS OFICIAIS EVEN ===== */
+
+@font-face {
+    font-family: 'EvenRoster';
+    src: url('/fonts/EvenRosterGrotesk_Final20Only.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'EvenSignature';
+    src: url('/fonts/EvenSignature_Final20Only.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
