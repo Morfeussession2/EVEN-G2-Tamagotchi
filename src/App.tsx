@@ -94,20 +94,21 @@ function App() {
                             placeholder="Pet name (max 12)"
                         />
                         <button
-                            className="primary-button"
+                            
+                            className="primary-button text-black"
                             onClick={() => setPetName(petNameInput)}
                         >
                             Save name
                         </button>
                         <button
-                            className="primary-button"
+                            className="primary-button text-black"
                             onClick={() => fastForward(60)}
                         >
                             Advance +1h
                         </button>
 
                         <button
-                            className="secondary-button"
+                            className="secondary-button text-black"
                             onClick={resetAgeCache}
                         >
                             Reset age

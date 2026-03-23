@@ -120,6 +120,7 @@ export class EvenTamagotchiBridge {
     private hasImageContainer = false;
     private unsubscribeEvents: (() => void) | null = null;
     private debugLog: DebugLogger = () => {};
+    private imageUpdateQueue: Promise<boolean> = Promise.resolve(true);
 
     private selectedAction: MenuScreen = 'feed';
     private actionLabels: [string, string, string] = ['FEED', 'PLAY', 'CLEAN'];
@@ -139,17 +140,13 @@ export class EvenTamagotchiBridge {
             containerID: 2,
             containerName: 'statsText',
             xPosition: 306,
-            yPosition: 22,
+            yPosition: 126,
             width: 250,
-            height: 238,
+            height: 110,
             content:
-                'Hunger: ▒▒▒▒\n' +
-                'Happy: ▒▒▒▒\n' +
-                'Poop: ▒▒▒\n\n' +
                 'NAME: G2 PET\n' +
                 'AGE: 0:00:00\n' +
-                'STATUS: GOOD\n' +
-                'LIFE: ████',
+                'STATUS: GOOD',
         } as const;
 
         const listBase = {
@@ -176,25 +173,34 @@ export class EvenTamagotchiBridge {
             height: 91,
         });
 
+        const lifeBarImage = new ImageContainerProperty({
+            containerID: 4,
+            containerName: 'lifeBarImg',
+            xPosition: 306,
+            yPosition: 22,
+            width: 132,
+            height: 100,
+        });
+
         return [
             {
                 name: 'full(list-capture)',
                 hasImage: true,
                 payload: {
-                    containerTotalNum: 3,
+                    containerTotalNum: 4,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 0 })],
                     listObject: [new ListContainerProperty({ ...listBase, isEventCapture: 1 })],
-                    imageObject: [image],
+                    imageObject: [image, lifeBarImage],
                 },
             },
             {
                 name: 'full(text-capture)',
                 hasImage: true,
                 payload: {
-                    containerTotalNum: 3,
+                    containerTotalNum: 4,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
                     listObject: [new ListContainerProperty({ ...listBase, isEventCapture: 0 })],
-                    imageObject: [image],
+                    imageObject: [image, lifeBarImage],
                 },
             },
             {
@@ -210,9 +216,9 @@ export class EvenTamagotchiBridge {
                 name: 'fallback(text+image)',
                 hasImage: true,
                 payload: {
-                    containerTotalNum: 2,
+                    containerTotalNum: 3,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
-                    imageObject: [image],
+                    imageObject: [image, lifeBarImage],
                 },
             },
             {
@@ -404,16 +410,52 @@ export class EvenTamagotchiBridge {
             return false;
         }
 
-        const result = await this.bridge.updateImageRawData(
-            new ImageRawDataUpdate({
-                containerID: 1,
-                containerName: 'petImg',
-                imageData,
-            }),
-        );
+        const result = await this.enqueueImageUpdate(1, 'petImg', imageData, 'pushUiFrame');
         this.imagePushCount += 1;
         this.log(`pushUiFrame #${this.imagePushCount}: bytes=${imageData.length} result=${String(result)}`);
         return result === 0 || result === true || result === 'success';
+    }
+
+    async pushLifeBarFrame(imageData: number[]): Promise<boolean> {
+        if (!this.bridge || !this.pageCreated) {
+            this.log(`pushLifeBarFrame skipped: bridge=${Boolean(this.bridge)} pageCreated=${this.pageCreated}`);
+            return false;
+        }
+        if (!this.hasImageContainer) {
+            this.log('pushLifeBarFrame skipped: active page has no image container');
+            return false;
+        }
+
+        const result = await this.enqueueImageUpdate(4, 'lifeBarImg', imageData, 'pushLifeBarFrame');
+        this.log(`pushLifeBarFrame: bytes=${imageData.length} result=${String(result)}`);
+        return result === 0 || result === true || result === 'success';
+    }
+
+    private async enqueueImageUpdate(
+        containerID: number,
+        containerName: string,
+        imageData: number[],
+        source: string,
+    ): Promise<unknown> {
+        const run = async (): Promise<unknown> => {
+            if (!this.bridge) return false;
+            const result = await this.bridge.updateImageRawData(
+                new ImageRawDataUpdate({
+                    containerID,
+                    containerName,
+                    imageData,
+                }),
+            );
+            this.log(`${source} updateImageRawData container=${containerName} result=${String(result)}`);
+            return result;
+        };
+
+        const next = this.imageUpdateQueue.then(run, run);
+        this.imageUpdateQueue = next.then(
+            () => true,
+            () => true,
+        );
+        return next;
     }
 
     async pushDashboardTexts(
@@ -427,8 +469,6 @@ export class EvenTamagotchiBridge {
             return;
         }
 
-        const bar = (value: number, max: number): string =>
-            `${'█'.repeat(value)}${'▒'.repeat(max - value)}`;
         const safeName = (state.petName || 'G2 PET').slice(0, 12).toUpperCase();
         const baseSeconds = Math.max(0, state.ageMinutes * 60);
         const liveSeconds = Math.max(0, Math.floor((nowMs - state.lastTickAt) / 1000));
@@ -437,7 +477,6 @@ export class EvenTamagotchiBridge {
         const ageMinutes = Math.floor((totalSeconds % 3600) / 60);
         const ageSeconds = totalSeconds % 60;
         const status = !state.isAlive ? 'DEAD' : state.isSick ? 'SICK' : state.health >= 70 ? 'GOOD' : 'OK';
-        const lifeUnits = Math.max(0, Math.min(4, Math.round(state.health / 25)));
         const safeHint = (hint ?? '').trim();
         const toShortLines = (value: string, maxChars = 24, maxLines = 7): string[] => {
             if (!value) return [];
@@ -465,13 +504,9 @@ export class EvenTamagotchiBridge {
                   'MINIGAME',
                   ...toShortLines(safeHint),
               ].join('\n')
-            : `Hunger: ${bar(state.hunger, 4)}\n` +
-              `Happy: ${bar(state.happiness, 4)}\n` +
-              `Poop: ${bar(state.poop, 3)}\n\n` +
-              `NAME: ${safeName}\n` +
+            : `NAME: ${safeName}\n` +
               `AGE: ${ageHours}:${String(ageMinutes).padStart(2, '0')}:${String(ageSeconds).padStart(2, '0')}\n` +
-              `STATUS: ${status}\n` +
-              `LIFE: ${bar(lifeUnits, 4)}` +
+              `STATUS: ${status}` +
               (safeHint ? `\n> ${toShortLines(safeHint, 26, 2).join('\n> ')}` : '');
 
         const result = await this.bridge.textContainerUpgrade(

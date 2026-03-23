@@ -77,6 +77,8 @@ body {
 .primary-button {
     background: #e7e07a;
     border: none;
+    color: #000;
+    -webkit-text-fill-color: #000;
     padding: 12px;
     border-radius: 8px; /* reduzido */
     font-family: 'EvenRoster';
@@ -87,11 +89,23 @@ body {
 .secondary-button {
     background: #dcdcdc;
     border: none;
+    color: #000;
+    -webkit-text-fill-color: #000;
     padding: 12px;
     border-radius: 8px; /* reduzido */
     font-family: 'EvenRoster';
     font-size: 14px;
     cursor: pointer;
+}
+
+.primary-button:visited,
+.primary-button:active,
+.primary-button:focus,
+.secondary-button:visited,
+.secondary-button:active,
+.secondary-button:focus {
+    color: #000;
+    -webkit-text-fill-color: #000;
 }
 
 .button-group {

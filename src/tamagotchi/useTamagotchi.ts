@@ -3,6 +3,7 @@ import { buildAsciiFrame } from './asciiPresenter';
 import { TamagotchiEngine } from './engine';
 import { EvenTamagotchiBridge, type EvenInputEvent } from './evenBridge';
 import { convertImageToGrayscalePng } from './imageUtils';
+import { renderLifeBarPng } from './lifeBarRenderer';
 import mascotTeen from './tamagotchiadolescente-03.png';
 import mascotEgg from './tamagotchiovo-04.png';
 import mascotBaby from './tamagotchibaby-05.png';
@@ -124,7 +125,9 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     const bridgeRef = useRef<EvenTamagotchiBridge | null>(null);
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const lastMascotKeyRef = useRef<string | null>(null);
+    const lastBarsKeyRef = useRef<string | null>(null);
     const mascotImageCacheRef = useRef<Map<string, Uint8Array>>(new Map());
+    const barsImageCacheRef = useRef<Map<string, Uint8Array>>(new Map());
     const mascotPushInFlightRef = useRef(false);
     const lastMascotPushAtRef = useRef(0);
     const screenIndexRef = useRef(0);
@@ -403,11 +406,53 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         bridgeRef.current?.setActionLabels(labels).then(() => {
             // Alguns firmwares limpam image layer após rebuild.
             lastMascotKeyRef.current = null;
+            lastBarsKeyRef.current = null;
             setImageRefreshToken((value) => value + 1);
         }).catch(() => {
             appendLog('[Hook] setActionLabels failed');
         });
     }, [appendLog, bridgeReady, playFlow.stage]);
+
+    useEffect(() => {
+        if (!bridgeReady) return;
+
+        const dialogMode = playFlow.stage !== 'idle';
+        const lifeUnits = Math.max(0, Math.min(4, Math.round(state.health / 25)));
+        const barsKey = dialogMode
+            ? 'dialog:hidden'
+            : `bars:${state.hunger}:${state.happiness}:${state.poop}:${lifeUnits}`;
+        if (lastBarsKeyRef.current === barsKey) return;
+
+        let cancelled = false;
+        const sendBars = async () => {
+            try {
+                let imageData = barsImageCacheRef.current.get(barsKey);
+                if (!imageData) {
+                    imageData = await renderLifeBarPng(
+                        state.hunger,
+                        state.happiness,
+                        state.poop,
+                        lifeUnits,
+                        !dialogMode,
+                    );
+                    barsImageCacheRef.current.set(barsKey, imageData);
+                }
+                if (cancelled) return;
+
+                const sent = await bridgeRef.current?.pushLifeBarFrame(Array.from(imageData));
+                if (sent) {
+                    lastBarsKeyRef.current = barsKey;
+                }
+            } catch {
+                appendLog('[Hook] pushLifeBarFrame failed');
+            }
+        };
+
+        void sendBars();
+        return () => {
+            cancelled = true;
+        };
+    }, [appendLog, bridgeReady, imageRefreshToken, playFlow.stage, state.happiness, state.health, state.hunger, state.poop]);
 
     useEffect(() => {
         const playDialogHint =
@@ -424,14 +469,13 @@ export const useTamagotchi = (): TamagotchiViewModel => {
                       'Click to return'
                   : '';
         const dialogMode = playFlow.stage !== 'idle';
-
         bridgeRef.current?.pushDashboardTexts(state, playDialogHint, dialogMode, renderNowMs).catch(() => {
             appendLog('[Hook] pushDashboardTexts failed');
         });
         return () => {
             // noop
         };
-    }, [appendLog, state, selectedScreen, playFlow, lastPetMoveLabel, renderNowMs]);
+    }, [appendLog, state, playFlow, lastPetMoveLabel, renderNowMs]);
 
     const toggleVoice = useCallback(() => {
         if (!voiceSupported) {
