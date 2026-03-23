@@ -1,4 +1,4 @@
-import type { PetStage, TamagotchiActionResult, TamagotchiState } from './types';
+import type { EggVariant, PetStage, TamagotchiActionResult, TamagotchiState } from './types';
 
 const STORAGE_KEY = 'even_tamagotchi_state_v1';
 const MAX_HUNGER = 4;
@@ -30,6 +30,8 @@ const resolveStage = (ageMinutes: number): PetStage => {
 
 const makeInitialState = (): TamagotchiState => ({
     petName: 'G2 PET',
+    eggVariant: 'egg1',
+    requiresEggSelection: true,
     hunger: 1,
     happiness: 3,
     poop: 0,
@@ -74,11 +76,25 @@ export class TamagotchiEngine {
     }
 
     resetAgeCache(now = Date.now()): TamagotchiState {
+        this.state.eggVariant = 'egg1';
+        this.state.requiresEggSelection = true;
+        this.state.hunger = 1;
+        this.state.happiness = 3;
+        this.state.poop = 0;
         this.state.ageMinutes = 0;
+        this.state.weight = 5;
         this.state.health = MAX_HEALTH;
         this.state.isSick = false;
         this.state.lastTickAt = now;
         this.updateDerivedState();
+        this.persist();
+        return this.getState();
+    }
+
+    chooseEgg(eggVariant: EggVariant, now = Date.now()): TamagotchiState {
+        this.state.eggVariant = eggVariant;
+        this.state.requiresEggSelection = false;
+        this.state.lastTickAt = now;
         this.persist();
         return this.getState();
     }
@@ -224,6 +240,11 @@ export class TamagotchiEngine {
             nextState.poop = clamp(nextState.poop, 0, MAX_POOP);
             nextState.health = clamp(nextState.health, MIN_HEALTH, MAX_HEALTH);
             nextState.petName = sanitizeName(nextState.petName ?? '');
+            nextState.eggVariant = nextState.eggVariant === 'egg2' ? 'egg2' : 'egg1';
+            nextState.requiresEggSelection =
+                typeof parsed.requiresEggSelection === 'boolean'
+                    ? parsed.requiresEggSelection
+                    : false;
             nextState.isAlive = true;
             nextState.stage = resolveStage(nextState.ageMinutes);
             return nextState;

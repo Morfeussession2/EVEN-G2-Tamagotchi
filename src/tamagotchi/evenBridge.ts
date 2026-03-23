@@ -12,9 +12,16 @@ import {
 } from '@evenrealities/even_hub_sdk';
 import type { MenuScreen, TamagotchiState } from './types';
 
-export type EvenInputEvent = 'scroll_top' | 'scroll_bottom' | 'click' | 'double_click';
+export type EvenInputEvent =
+    | 'scroll_top'
+    | 'scroll_bottom'
+    | 'click'
+    | 'double_click'
+    | 'egg_next'
+    | 'egg_confirm';
 type AnyBridge = Awaited<ReturnType<typeof waitForEvenAppBridge>>;
 type DebugLogger = (message: string) => void;
+type BridgeUiMode = 'default' | 'egg_selection';
 
 type LayoutAttempt = {
     name: string;
@@ -25,6 +32,7 @@ type LayoutAttempt = {
         imageObject?: ImageContainerProperty[];
     };
     hasImage: boolean;
+    hasBarsImage: boolean;
 };
 
 const ACTIONS: MenuScreen[] = ['feed', 'play', 'clean'];
@@ -118,9 +126,11 @@ export class EvenTamagotchiBridge {
     private bridge: AnyBridge | null = null;
     private pageCreated = false;
     private hasImageContainer = false;
+    private hasBarsImageContainer = false;
     private unsubscribeEvents: (() => void) | null = null;
     private debugLog: DebugLogger = () => {};
     private imageUpdateQueue: Promise<boolean> = Promise.resolve(true);
+    private uiMode: BridgeUiMode = 'default';
 
     private selectedAction: MenuScreen = 'feed';
     private actionLabels: [string, string, string] = ['FEED', 'PLAY', 'CLEAN'];
@@ -136,6 +146,56 @@ export class EvenTamagotchiBridge {
     }
 
     private buildLayoutAttempts(): LayoutAttempt[] {
+        if (this.uiMode === 'egg_selection') {
+            const textBase = {
+                containerID: 2,
+                containerName: 'statsText',
+                xPosition: 192,
+                yPosition: 154,
+                width: 220,
+                height: 28,
+                content: 'CHOOSE EGG',
+            } as const;
+
+            const listBase = {
+                containerID: 3,
+                containerName: 'actionsList',
+                xPosition: 198,
+                yPosition: 198,
+                width: 180,
+                height: 74,
+                itemContainer: new ListItemContainerProperty({
+                    itemCount: 2,
+                    itemWidth: 180,
+                    itemName: ['NEXT', 'OK'],
+                    isItemSelectBorderEn: 1,
+                }),
+            } as const;
+
+            const image = new ImageContainerProperty({
+                containerID: 1,
+                containerName: 'petImg',
+                xPosition: 197,
+                yPosition: 40,
+                width: 182,
+                height: 91,
+            });
+
+            return [
+                {
+                    name: 'egg-selection',
+                    hasImage: true,
+                    hasBarsImage: false,
+                    payload: {
+                        containerTotalNum: 3,
+                        textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 0 })],
+                        listObject: [new ListContainerProperty({ ...listBase, isEventCapture: 1 })],
+                        imageObject: [image],
+                    },
+                },
+            ];
+        }
+
         const textBase = {
             containerID: 2,
             containerName: 'statsText',
@@ -186,6 +246,7 @@ export class EvenTamagotchiBridge {
             {
                 name: 'full(list-capture)',
                 hasImage: true,
+                hasBarsImage: true,
                 payload: {
                     containerTotalNum: 4,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 0 })],
@@ -196,6 +257,7 @@ export class EvenTamagotchiBridge {
             {
                 name: 'full(text-capture)',
                 hasImage: true,
+                hasBarsImage: true,
                 payload: {
                     containerTotalNum: 4,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
@@ -206,6 +268,7 @@ export class EvenTamagotchiBridge {
             {
                 name: 'fallback(text+list)',
                 hasImage: false,
+                hasBarsImage: false,
                 payload: {
                     containerTotalNum: 2,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 0 })],
@@ -215,6 +278,7 @@ export class EvenTamagotchiBridge {
             {
                 name: 'fallback(text+image)',
                 hasImage: true,
+                hasBarsImage: true,
                 payload: {
                     containerTotalNum: 3,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
@@ -224,6 +288,7 @@ export class EvenTamagotchiBridge {
             {
                 name: 'fallback(text-only)',
                 hasImage: false,
+                hasBarsImage: false,
                 payload: {
                     containerTotalNum: 1,
                     textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
@@ -241,6 +306,7 @@ export class EvenTamagotchiBridge {
         this.log(`createStartUpPageContainer result=${String(createResult)} (${attempt.name})`);
         if (createResult === 0) {
             this.hasImageContainer = attempt.hasImage;
+            this.hasBarsImageContainer = attempt.hasBarsImage;
             return true;
         }
 
@@ -251,6 +317,7 @@ export class EvenTamagotchiBridge {
         this.log(`rebuildPageContainer result=${String(rebuildOk)} (${attempt.name})`);
         if (rebuildOk) {
             this.hasImageContainer = attempt.hasImage;
+            this.hasBarsImageContainer = attempt.hasBarsImage;
             return true;
         }
         return false;
@@ -261,10 +328,13 @@ export class EvenTamagotchiBridge {
         onActionFocus?: (screen: MenuScreen) => void,
         onActionExecute?: (screen: MenuScreen) => void,
         onDebugLog?: DebugLogger,
+        initialMode: BridgeUiMode = 'default',
     ): Promise<boolean> {
         this.debugLog = onDebugLog ?? (() => {});
         this.pageCreated = false;
         this.hasImageContainer = false;
+        this.hasBarsImageContainer = false;
+        this.uiMode = initialMode;
 
         try {
             this.log('init started');
@@ -325,6 +395,12 @@ export class EvenTamagotchiBridge {
 
                 const eventType = parseEventType(event);
                 if (eventType === undefined || eventType === null) {
+                    if (this.uiMode === 'egg_selection' && isActionsListEvent(event)) {
+                        const selectedIdx = idx ?? 0;
+                        this.log(`event: undefined(egg-selection) idx=${selectedIdx}`);
+                        onInput(selectedIdx === 0 ? 'egg_next' : 'egg_confirm');
+                        return;
+                    }
                     // Mesmo padrao do clock: tratar evento de lista sem eventType como interacao valida.
                     // Executa somente quando o payload pertence a lista de acoes.
                     if (isActionsListEvent(event)) {
@@ -352,6 +428,12 @@ export class EvenTamagotchiBridge {
                     return;
                 }
                 if (CLICK_EVENTS.has(eventType)) {
+                    if (this.uiMode === 'egg_selection') {
+                        const selectedIdx = idx ?? 0;
+                        this.log(`event: click(egg-selection) idx=${selectedIdx}`);
+                        onInput(selectedIdx === 0 ? 'egg_next' : 'egg_confirm');
+                        return;
+                    }
                     const action = actionFromEvent ?? this.selectedAction;
                     executeActionSafe(action, `click-event:${String(eventType)}`);
                     onInput('click');
@@ -369,8 +451,22 @@ export class EvenTamagotchiBridge {
             this.bridge = null;
             this.pageCreated = false;
             this.hasImageContainer = false;
+            this.hasBarsImageContainer = false;
             this.log(`init failed: ${(err as Error).message}`);
             return false;
+        }
+    }
+
+    async setEggSelectionMode(active: boolean): Promise<void> {
+        this.uiMode = active ? 'egg_selection' : 'default';
+        if (!this.bridge || !this.pageCreated) return;
+        const preferred = this.buildLayoutAttempts()[0];
+        const ok = await this.bridge.rebuildPageContainer(new RebuildPageContainer(preferred.payload));
+        this.log(`setEggSelectionMode rebuild result=${String(ok)} active=${active}`);
+        if (ok) {
+            this.pageCreated = true;
+            this.hasImageContainer = preferred.hasImage;
+            this.hasBarsImageContainer = preferred.hasBarsImage;
         }
     }
 
@@ -423,6 +519,10 @@ export class EvenTamagotchiBridge {
         }
         if (!this.hasImageContainer) {
             this.log('pushLifeBarFrame skipped: active page has no image container');
+            return false;
+        }
+        if (!this.hasBarsImageContainer) {
+            this.log('pushLifeBarFrame skipped: active page has no bars image container');
             return false;
         }
 
