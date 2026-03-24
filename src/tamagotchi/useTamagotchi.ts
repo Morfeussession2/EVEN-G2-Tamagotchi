@@ -9,6 +9,9 @@ import mascotEgg from './tamagotchiovo-04.png';
 import mascotEgg2 from '../Icons/Egg2-01.png';
 import mascotBaby from './tamagotchibaby-05.png';
 import mascotAdult from './tamagotchiadulto-06.png';
+import mascotBaby2 from '../Icons/baby2.png';
+import mascotTeen2 from '../Icons/teen2.png';
+import mascotAdult2 from '../Icons/adult2.png';
 import rpsMascot from './Pedrapapeltesoura-04.png';
 import type { EggVariant, MenuScreen, TamagotchiActionResult, TamagotchiState } from './types';
 
@@ -76,6 +79,11 @@ const eggPreviewUrl = (eggVariant: EggVariant): string =>
 
 const mascotByStage = (stage: TamagotchiState['stage'], eggVariant: EggVariant): string => {
     if (stage === 'egg') return eggPreviewUrl(eggVariant);
+    if (eggVariant === 'egg2') {
+        if (stage === 'baby') return mascotBaby2;
+        if (stage === 'adult') return mascotAdult2;
+        return mascotTeen2;
+    }
     if (stage === 'baby') return mascotBaby;
     if (stage === 'adult') return mascotAdult;
     return mascotTeen;
