@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildAsciiFrame } from './asciiPresenter';
 import { TamagotchiEngine } from './engine';
 import { EvenTamagotchiBridge, type EvenInputEvent } from './evenBridge';
+import { DualStorage } from './dualStorage';
 import { convertImageToGrayscalePng } from './imageUtils';
 import { renderLifeBarPng } from './lifeBarRenderer';
 import mascotTeen from './tamagotchiadolescente-03.png';
@@ -23,6 +24,7 @@ declare global {
     }
 }
 
+const STORAGE_KEY = 'even_tamagotchi_state_v1';
 const SCREENS: MenuScreen[] = ['status', 'feed', 'play', 'clean', 'medicine'];
 const MASCOT_TARGET_WIDTH = 182;
 const MASCOT_TARGET_HEIGHT = 91;
@@ -133,7 +135,7 @@ export interface TamagotchiViewModel {
 }
 
 export const useTamagotchi = (): TamagotchiViewModel => {
-    const engineRef = useRef<TamagotchiEngine>(new TamagotchiEngine());
+    const engineRef = useRef<TamagotchiEngine | null>(null);
     const bridgeRef = useRef<EvenTamagotchiBridge | null>(null);
     const recognitionRef = useRef<SpeechRecognition | null>(null);
     const lastMascotKeyRef = useRef<string | null>(null);
@@ -144,9 +146,11 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     const lastMascotPushAtRef = useRef(0);
     const screenIndexRef = useRef(0);
     const playFlowRef = useRef<PlayFlowState>(IDLE_PLAY_FLOW);
-    const [state, setState] = useState<TamagotchiState>(() => engineRef.current.getState());
+    
+    const [state, setState] = useState<TamagotchiState>(() => TamagotchiEngine.parseState(null));
+    const [isLoaded, setIsLoaded] = useState(false);
     const [screenIndex, setScreenIndex] = useState(0);
-    const [message, setMessage] = useState('Pet woke up.');
+    const [message, setMessage] = useState('Pet waking up...');
     const [voiceListening, setVoiceListening] = useState(false);
     const [bridgeReady, setBridgeReady] = useState(false);
     const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -154,8 +158,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     const [lastPetMoveLabel, setLastPetMoveLabel] = useState<string>('');
     const [imageRefreshToken, setImageRefreshToken] = useState(0);
     const [renderNowMs, setRenderNowMs] = useState<number>(() => Date.now());
-    const [eggChoice, setEggChoice] = useState<EggVariant>(() => engineRef.current.getState().eggVariant);
-    const eggChoiceRef = useRef<EggVariant>(engineRef.current.getState().eggVariant);
+    const [eggChoice, setEggChoice] = useState<EggVariant>(() => state.eggVariant);
+    const eggChoiceRef = useRef<EggVariant>(state.eggVariant);
 
     const selectedScreen = SCREENS[screenIndex];
     screenIndexRef.current = screenIndex;
@@ -176,6 +180,20 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         setDebugLogs((prev) => [line, ...prev].slice(0, 80));
     }, []);
 
+    // Initial persistence load
+    useEffect(() => {
+        void DualStorage.getItem(STORAGE_KEY).then((raw) => {
+            const recoveredState = TamagotchiEngine.parseState(raw);
+            engineRef.current = new TamagotchiEngine(recoveredState);
+            const initialState = engineRef.current.getState();
+            setState(initialState);
+            setEggChoice(initialState.eggVariant);
+            setMessage('Pet woke up.');
+            setIsLoaded(true);
+            appendLog(`[Hook] state loaded from persistence. Stage: ${initialState.stage}`);
+        });
+    }, [appendLog]);
+
     useEffect(() => {
         playFlowRef.current = playFlow;
     }, [playFlow]);
@@ -189,6 +207,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     }, [eggChoice]);
 
     const syncState = useCallback((nextMessage?: string) => {
+        if (!engineRef.current) return;
         const nextState = engineRef.current.syncWithClock();
         setState(nextState);
         if (nextMessage) setMessage(nextMessage);
@@ -199,7 +218,10 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     }, []);
 
     const executeAction = useCallback((screen: MenuScreen) => {
-        if (engineRef.current.getState().requiresEggSelection) {
+        const engine = engineRef.current;
+        if (!engine) return;
+
+        if (engine.getState().requiresEggSelection) {
             return;
         }
 
@@ -250,8 +272,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             const seriesClosed = nextUserWins >= 2 || nextPetWins >= 2 || flow.round >= 3;
             if (seriesClosed) {
                 const userWonSeries = nextUserWins >= 2;
-                const reward = engineRef.current.applyPlaySeriesReward(userWonSeries);
-                const nextState = engineRef.current.getState();
+                const reward = engine.applyPlaySeriesReward(userWonSeries);
+                const nextState = engine.getState();
                 setState(nextState);
                 const resultFlow: PlayFlowState = {
                     stage: 'result',
@@ -298,18 +320,18 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         let result: TamagotchiActionResult = { changed: false, message: 'No action on this screen.' };
         switch (screen) {
             case 'feed':
-                result = engineRef.current.feed();
+                result = engine.feed();
                 break;
             case 'clean':
-                result = engineRef.current.clean();
+                result = engine.clean();
                 break;
             case 'medicine':
-                result = engineRef.current.medicine();
+                result = engine.medicine();
                 break;
             default:
                 result = { changed: false, message: 'Status selected.' };
         }
-        const nextState = engineRef.current.getState();
+        const nextState = engine.getState();
         setState(nextState);
         setMessage(result.message);
     }, []);
@@ -319,14 +341,17 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     }, []);
 
     const onEvenInput = useCallback((event: EvenInputEvent) => {
-        if (engineRef.current.getState().requiresEggSelection) {
+        const engine = engineRef.current;
+        if (!engine) return;
+
+        if (engine.getState().requiresEggSelection) {
             if (event === 'egg_next') {
                 cycleEggChoice();
                 return;
             }
             if (event === 'egg_confirm') {
                 const selectedEgg = eggChoiceRef.current;
-                const nextState = engineRef.current.chooseEgg(selectedEgg);
+                const nextState = engine.chooseEgg(selectedEgg);
                 setState(nextState);
                 setMessage(`Egg selected: ${selectedEgg === 'egg2' ? 'Egg 2' : 'Egg 1'}.`);
             }
@@ -359,6 +384,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
 
     useEffect(() => {
         const timer = setInterval(() => {
+            if (!engineRef.current) return;
             const nextState = engineRef.current.syncWithClock();
             setState(nextState);
             setRenderNowMs(Date.now());
@@ -367,14 +393,16 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     }, []);
 
     useEffect(() => {
-        syncState('Synced.');
-    }, [syncState]);
+        if (isLoaded) {
+            syncState('Synced.');
+        }
+    }, [isLoaded, syncState]);
 
     useEffect(() => {
-        if (state.requiresEggSelection) {
+        if (state.requiresEggSelection && isLoaded) {
             setMessage('Choose an egg. NEXT to switch, OK to confirm.');
         }
-    }, [state.requiresEggSelection]);
+    }, [state.requiresEggSelection, isLoaded]);
 
     useEffect(() => {
         lastMascotKeyRef.current = null;
@@ -470,7 +498,6 @@ export const useTamagotchi = (): TamagotchiViewModel => {
                   ? ['OK', 'OK', 'OK']
                 : ['FEED', 'PLAY', 'CLEAN'];
         bridgeRef.current?.setActionLabels(labels).then(() => {
-            // Alguns firmwares limpam image layer após rebuild.
             lastMascotKeyRef.current = null;
             lastBarsKeyRef.current = null;
             setImageRefreshToken((value) => value + 1);
@@ -591,12 +618,14 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     }, [executeAction, voiceListening, voiceSupported]);
 
     const fastForward = useCallback((minutes: number) => {
+        if (!engineRef.current) return;
         const nextState = engineRef.current.fastForward(minutes);
         setState(nextState);
         setMessage(`Time advanced by ${minutes} min.`);
     }, []);
 
     const resetAgeCache = useCallback(() => {
+        if (!engineRef.current) return;
         const nextState = engineRef.current.resetAgeCache();
         setState(nextState);
         lastMascotKeyRef.current = null;
@@ -606,6 +635,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     }, [appendLog]);
 
     const setPetName = useCallback((name: string) => {
+        if (!engineRef.current) return;
         const nextState = engineRef.current.setPetName(name);
         setState(nextState);
         setMessage(`Name updated to ${nextState.petName}.`);
@@ -613,6 +643,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     }, [appendLog]);
 
     const discipline = useCallback(() => {
+        if (!engineRef.current) return;
         const result = engineRef.current.discipline();
         setState(engineRef.current.getState());
         setMessage(result.message);

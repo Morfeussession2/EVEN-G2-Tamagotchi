@@ -1,3 +1,4 @@
+import { DualStorage } from './dualStorage';
 import type { EggVariant, PetStage, TamagotchiActionResult, TamagotchiState } from './types';
 
 const STORAGE_KEY = 'even_tamagotchi_state_v1';
@@ -18,10 +19,6 @@ const sanitizeName = (value: string): string => {
 };
 
 const resolveStage = (ageMinutes: number): PetStage => {
-    // Regras solicitadas:
-    // egg -> baby: 1h (60 min)
-    // baby -> teen: 24h adicionais (1440 min)
-    // teen -> adult: 72h adicionais (4320 min)
     if (ageMinutes < 60) return 'egg';
     if (ageMinutes < 1500) return 'baby';
     if (ageMinutes < 5820) return 'teen';
@@ -47,8 +44,8 @@ const makeInitialState = (): TamagotchiState => ({
 export class TamagotchiEngine {
     private state: TamagotchiState;
 
-    constructor() {
-        this.state = this.loadState();
+    constructor(initialState?: TamagotchiState) {
+        this.state = initialState ?? makeInitialState();
         this.syncWithClock();
     }
 
@@ -61,6 +58,9 @@ export class TamagotchiEngine {
         const elapsedMinutes = Math.floor(elapsedMs / 60_000);
         if (elapsedMinutes > 0) {
             this.advanceMinutes(elapsedMinutes, now);
+        } else {
+             // Even if no minutes passed, update timestamp to now for relative drift.
+             this.state.lastTickAt = now;
         }
         return this.getState();
     }
@@ -108,7 +108,6 @@ export class TamagotchiEngine {
     feed(): TamagotchiActionResult {
         this.state.hunger = clamp(this.state.hunger - 1, 0, MAX_HUNGER);
         this.state.weight += 1;
-        // Feeding is always a small maintenance heal.
         this.state.health = clamp(this.state.health + 1, MIN_HEALTH, MAX_HEALTH);
         this.updateDerivedState();
         this.persist();
@@ -200,8 +199,6 @@ export class TamagotchiEngine {
                 (this.state.poop >= 2 ? 3 : 0);
 
             this.state.health = clamp(this.state.health - neglectPenalty, MIN_HEALTH, MAX_HEALTH);
-            // Regeneration rule: empty hunger + max happiness heals the pet.
-            // Use a stronger per-minute recovery so LIFE bar changes are visible.
             if (this.state.hunger === 0 && this.state.happiness === MAX_HAPPINESS) {
                 this.state.health = clamp(this.state.health + 5, MIN_HEALTH, MAX_HEALTH);
             }
@@ -215,10 +212,7 @@ export class TamagotchiEngine {
 
     private updateDerivedState(): void {
         this.state.stage = resolveStage(this.state.ageMinutes);
-        // Regra de produto: pet nao morre.
         this.state.isAlive = true;
-        // Sickness with hysteresis to avoid "stuck sick" behavior:
-        // enters sick at low health, exits once recovered enough.
         if (this.state.health <= 35) {
             this.state.isSick = true;
         } else if (this.state.health >= 45) {
@@ -226,10 +220,9 @@ export class TamagotchiEngine {
         }
     }
 
-    private loadState(): TamagotchiState {
+    static parseState(raw: string | null): TamagotchiState {
+        if (!raw) return makeInitialState();
         try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (!raw) return makeInitialState();
             const parsed = JSON.parse(raw) as Partial<TamagotchiState>;
             const nextState: TamagotchiState = {
                 ...makeInitialState(),
@@ -254,6 +247,6 @@ export class TamagotchiEngine {
     }
 
     private persist(): void {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+        void DualStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
     }
 }

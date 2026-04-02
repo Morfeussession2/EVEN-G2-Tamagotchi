@@ -1,22 +1,25 @@
 {
-    "app_id": 9991238,
     "package_id": "com.evenrealities.tamagotchi",
+    "edition": "202601",
     "name": "Even Tamagotchi",
-    "version": "1.0.0",
-    "description": "Virtual Pet for G2",
+    "version": "1.2.1",
+    "min_app_version": "2.0.0",
+    "min_sdk_version": "0.0.9",
     "entrypoint": "index.html",
-    "entry": "index.html",
-    "os_version": "1.0",
     "permissions": [
-        "display",
-        "gestures",
-        "notifications"
-    ],
-    "services": [
         {
-            "id": 1,
-            "type": "background",
-            "name": "pet_engine"
+            "name": "network",
+            "desc": "This app needs to access the network in order to ...",
+            "whitelist": [
+                "https://example.com"
+            ]
+        },
+        {
+            "name": "location",
+            "desc": "This app needs to access the location in order to ..."
         }
+    ],
+    "supported_languages": [
+        "en"
     ]
 }
