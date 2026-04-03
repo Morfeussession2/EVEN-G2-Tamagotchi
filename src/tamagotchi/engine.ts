@@ -1,4 +1,4 @@
-import { DualStorage } from './dualStorage';
+import { BridgeStorage } from './bridgeStorage';
 import type { EggVariant, PetStage, TamagotchiActionResult, TamagotchiState } from './types';
 
 const STORAGE_KEY = 'even_tamagotchi_state_v1';
@@ -247,6 +247,6 @@ export class TamagotchiEngine {
     }
 
     private persist(): void {
-        void DualStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
+        void BridgeStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));
     }
 }

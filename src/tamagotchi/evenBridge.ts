@@ -9,6 +9,7 @@ import {
     TextContainerProperty,
     TextContainerUpgrade,
     waitForEvenAppBridge,
+    EvenAppBridge,
 } from '@evenrealities/even_hub_sdk';
 import type { MenuScreen, TamagotchiState } from './types';
 
@@ -19,7 +20,7 @@ export type EvenInputEvent =
     | 'double_click'
     | 'egg_next'
     | 'egg_confirm';
-type AnyBridge = Awaited<ReturnType<typeof waitForEvenAppBridge>>;
+// Bridge types for better alignment
 type DebugLogger = (message: string) => void;
 type BridgeUiMode = 'default' | 'egg_selection';
 
@@ -123,7 +124,7 @@ const isActionsListEvent = (event: any): boolean => {
 };
 
 export class EvenTamagotchiBridge {
-    private bridge: AnyBridge | null = null;
+    private bridge: EvenAppBridge | null = null;
     private pageCreated = false;
     private hasImageContainer = false;
     private hasBarsImageContainer = false;
@@ -348,12 +349,15 @@ export class EvenTamagotchiBridge {
             try {
                 const device = await this.bridge.getDeviceInfo();
                 this.log(
-                    `device: model=${device?.model ?? 'unknown'} connected=${
-                        device?.status?.isConnected?.() ?? 'n/a'
-                    } battery=${device?.status?.batteryLevel ?? 'n/a'}`,
+                    `device: model=${device?.model ?? 'unknown'} sn=${device?.sn ?? 'n/a'} status=${device?.status ?? 'n/a'}`,
                 );
+                
+                const user = await this.bridge.getUserInfo();
+                if (user) {
+                    this.log(`user: name=${user.name} country=${user.country}`);
+                }
             } catch (err) {
-                this.log(`getDeviceInfo failed: ${(err as Error).message}`);
+                this.log(`getInfo failed: ${(err as Error).message}`);
             }
 
             for (const attempt of this.buildLayoutAttempts()) {
