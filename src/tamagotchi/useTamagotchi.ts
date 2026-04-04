@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildAsciiFrame } from './asciiPresenter';
 import { TamagotchiEngine } from './engine';
 import { EvenTamagotchiBridge, type EvenInputEvent } from './evenBridge';
-import { BridgeStorage } from './bridgeStorage';
+import { StorageService } from './storageService';
 import { convertImageToGrayscalePng } from './imageUtils';
 import { renderLifeBarPng } from './lifeBarRenderer';
 import mascotTeen from './tamagotchiadolescente-03.png';
@@ -182,7 +182,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
 
     // Initial persistence load
     useEffect(() => {
-        void BridgeStorage.getItem(STORAGE_KEY).then((raw) => {
+        void StorageService.read(STORAGE_KEY).then((raw) => {
             const recoveredState = TamagotchiEngine.parseState(raw);
             engineRef.current = new TamagotchiEngine(recoveredState);
             const initialState = engineRef.current.getState();
