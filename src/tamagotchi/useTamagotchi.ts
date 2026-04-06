@@ -194,6 +194,13 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         });
     }, [appendLog]);
 
+    // Persist state on every change, guarded by isLoaded to avoid overwriting
+    // the saved state with defaults during the async load window.
+    useEffect(() => {
+        if (!isLoaded) return;
+        void StorageService.update(STORAGE_KEY, JSON.stringify(state));
+    }, [state, isLoaded]);
+
     useEffect(() => {
         playFlowRef.current = playFlow;
     }, [playFlow]);
