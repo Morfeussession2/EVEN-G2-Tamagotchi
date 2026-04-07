@@ -194,11 +194,30 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         });
     }, [appendLog]);
 
+    const isSavingRef = useRef(false);
+    const pendingSaveRef = useRef<string | null>(null);
+
     // Persist state on every change, guarded by isLoaded to avoid overwriting
     // the saved state with defaults during the async load window.
     useEffect(() => {
         if (!isLoaded) return;
-        void StorageService.update(STORAGE_KEY, JSON.stringify(state));
+        
+        const saveQueue = async () => {
+            if (isSavingRef.current) return;
+            isSavingRef.current = true;
+            try {
+                while (pendingSaveRef.current) {
+                    const toSave = pendingSaveRef.current;
+                    pendingSaveRef.current = null;
+                    await StorageService.update(STORAGE_KEY, toSave);
+                }
+            } finally {
+                isSavingRef.current = false;
+            }
+        };
+
+        pendingSaveRef.current = JSON.stringify(state);
+        void saveQueue();
     }, [state, isLoaded]);
 
     useEffect(() => {

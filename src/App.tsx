@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTamagotchi } from './tamagotchi/useTamagotchi';
+import appConfig from '../app.json';
 
 function InfoCard({ children }: { children: React.ReactNode }) {
     return <div className="card">{children}</div>;
@@ -133,6 +134,10 @@ function App() {
                     </div>
                 </InfoCard>
             </section>
+
+            <footer style={{ textAlign: 'center', fontSize: '12px', color: '#888', marginTop: '2rem', paddingBottom: '1rem', opacity: 0.7 }}>
+                v{appConfig.version}
+            </footer>
         </main>
     );
 }

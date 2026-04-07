@@ -2,7 +2,7 @@
     "package_id": "com.evenrealities.tamagotchi",
     "edition": "202601",
     "name": "Even Tamagotchi",
-    "version": "1.2.4",
+    "version": "1.2.5",
     "min_app_version": "2.0.0",
     "min_sdk_version": "0.0.9",
     "entrypoint": "index.html",
@@ -13,10 +13,6 @@
             "whitelist": [
                 "https://example.com"
             ]
-        },
-        {
-            "name": "location",
-            "desc": "This app needs to access the location in order to ..."
         }
     ],
     "supported_languages": [

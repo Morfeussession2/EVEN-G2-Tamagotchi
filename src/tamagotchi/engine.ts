@@ -1,7 +1,5 @@
-import { StorageService } from './storageService';
 import type { EggVariant, PetStage, TamagotchiActionResult, TamagotchiState } from './types';
 
-const STORAGE_KEY = 'even_tamagotchi_state_v1';
 const MAX_HUNGER = 4;
 const MAX_HAPPINESS = 4;
 const MAX_POOP = 3;
@@ -87,7 +85,6 @@ export class TamagotchiEngine {
         this.state.isSick = false;
         this.state.lastTickAt = now;
         this.updateDerivedState();
-        this.persist();
         return this.getState();
     }
 
@@ -95,13 +92,11 @@ export class TamagotchiEngine {
         this.state.eggVariant = eggVariant;
         this.state.requiresEggSelection = false;
         this.state.lastTickAt = now;
-        this.persist();
         return this.getState();
     }
 
     setPetName(name: string): TamagotchiState {
         this.state.petName = sanitizeName(name);
-        this.persist();
         return this.getState();
     }
 
@@ -110,7 +105,6 @@ export class TamagotchiEngine {
         this.state.weight += 1;
         this.state.health = clamp(this.state.health + 1, MIN_HEALTH, MAX_HEALTH);
         this.updateDerivedState();
-        this.persist();
         return { changed: true, message: 'Pet fed.' };
     }
 
@@ -126,7 +120,6 @@ export class TamagotchiEngine {
             this.state.health = clamp(this.state.health + 1, MIN_HEALTH, MAX_HEALTH);
         }
         this.updateDerivedState();
-        this.persist();
         return { changed: true, message: 'Pet played and got happier.' };
     }
 
@@ -144,7 +137,6 @@ export class TamagotchiEngine {
         this.state.weight = clamp(this.state.weight - 1, 1, 99);
         this.state.health = clamp(this.state.health + 1, MIN_HEALTH, MAX_HEALTH);
         this.updateDerivedState();
-        this.persist();
         return {
             changed: true,
             message: userWonSeries
@@ -160,7 +152,6 @@ export class TamagotchiEngine {
         this.state.poop = 0;
         this.state.health = clamp(this.state.health + 4, MIN_HEALTH, MAX_HEALTH);
         this.updateDerivedState();
-        this.persist();
         return { changed: true, message: 'Area cleaned.' };
     }
 
@@ -168,7 +159,6 @@ export class TamagotchiEngine {
         this.state.health = clamp(this.state.health + 15, MIN_HEALTH, MAX_HEALTH);
         this.state.isSick = false;
         this.updateDerivedState();
-        this.persist();
         return { changed: true, message: 'Medicine applied.' };
     }
 
@@ -176,7 +166,6 @@ export class TamagotchiEngine {
         this.state.happiness = clamp(this.state.happiness - 1, 0, MAX_HAPPINESS);
         this.state.health = clamp(this.state.health + 2, MIN_HEALTH, MAX_HEALTH);
         this.updateDerivedState();
-        this.persist();
         return { changed: true, message: 'Discipline applied.' };
     }
 
@@ -207,7 +196,6 @@ export class TamagotchiEngine {
 
         this.state.lastTickAt = now;
         this.updateDerivedState();
-        this.persist();
     }
 
     private updateDerivedState(): void {
@@ -246,7 +234,4 @@ export class TamagotchiEngine {
         }
     }
 
-    private persist(): void {
-        void StorageService.update(STORAGE_KEY, JSON.stringify(this.state));
-    }
 }
