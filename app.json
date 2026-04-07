@@ -17,10 +17,6 @@
         {
             "name": "location",
             "desc": "This app needs to access the location in order to ..."
-        },
-        {
-            "name": "storage",
-            "desc": "This app needs to access the storage in order to save your pet's data."
         }
     ],
     "supported_languages": [
