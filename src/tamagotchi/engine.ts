@@ -55,22 +55,21 @@ export class TamagotchiEngine {
         const elapsedMs = now - this.state.lastTickAt;
         const elapsedMinutes = Math.floor(elapsedMs / 60_000);
         if (elapsedMinutes > 0) {
-            this.advanceMinutes(elapsedMinutes, now);
-        } else {
-             // Even if no minutes passed, update timestamp to now for relative drift.
-             this.state.lastTickAt = now;
+            this.advanceMinutes(elapsedMinutes);
+            this.state.lastTickAt += elapsedMinutes * 60_000;
         }
         return this.getState();
     }
 
-    tick(now = Date.now()): TamagotchiState {
-        this.advanceMinutes(1, now);
-        return this.getState();
+    tick(): TamagotchiState {
+        this.state.lastTickAt -= 60_000;
+        return this.syncWithClock();
     }
 
-    fastForward(minutes: number, now = Date.now()): TamagotchiState {
-        this.advanceMinutes(Math.max(0, Math.floor(minutes)), now);
-        return this.getState();
+    fastForward(minutes: number): TamagotchiState {
+        const msToShift = Math.max(0, Math.floor(minutes)) * 60_000;
+        this.state.lastTickAt -= msToShift;
+        return this.syncWithClock();
     }
 
     resetAgeCache(now = Date.now()): TamagotchiState {
@@ -169,7 +168,7 @@ export class TamagotchiEngine {
         return { changed: true, message: 'Discipline applied.' };
     }
 
-    private advanceMinutes(minutes: number, now: number): void {
+    private advanceMinutes(minutes: number): void {
         for (let i = 0; i < minutes; i += 1) {
             this.state.ageMinutes += 1;
             if (this.state.ageMinutes % 3 === 0) {
@@ -194,7 +193,6 @@ export class TamagotchiEngine {
             if (this.state.health <= 35) this.state.isSick = true;
         }
 
-        this.state.lastTickAt = now;
         this.updateDerivedState();
     }
 

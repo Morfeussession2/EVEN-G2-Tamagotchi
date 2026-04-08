@@ -144,10 +144,15 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     const barsImageCacheRef = useRef<Map<string, Uint8Array>>(new Map());
     const mascotPushInFlightRef = useRef(false);
     const lastMascotPushAtRef = useRef(0);
+    const barsPushInFlightRef = useRef(false);
+    const lastBarsPushAtRef = useRef(0);
     const screenIndexRef = useRef(0);
     const playFlowRef = useRef<PlayFlowState>(IDLE_PLAY_FLOW);
-    
+
     const [state, setState] = useState<TamagotchiState>(() => TamagotchiEngine.parseState(null));
+    const stateRef = useRef<TamagotchiState>(state);
+    stateRef.current = state;
+
     const [isLoaded, setIsLoaded] = useState(false);
     const [screenIndex, setScreenIndex] = useState(0);
     const [message, setMessage] = useState('Pet waking up...');
@@ -168,8 +173,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     const currentMascotUrl = state.requiresEggSelection
         ? eggPreviewUrl(eggChoice)
         : playFlow.stage === 'idle'
-          ? mascotByStage(state.stage, state.eggVariant)
-          : rpsMascot;
+            ? mascotByStage(state.stage, state.eggVariant)
+            : rpsMascot;
     const currentMascotKey = state.requiresEggSelection
         ? `egg-selection:${eggChoice}`
         : `${playFlow.stage}:${state.stage}:${state.eggVariant}:${currentMascotUrl}`;
@@ -186,6 +191,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             const recoveredState = TamagotchiEngine.parseState(raw);
             engineRef.current = new TamagotchiEngine(recoveredState);
             const initialState = engineRef.current.getState();
+            stateRef.current = initialState;
+            lastSavedStateRef.current = JSON.stringify(initialState);
             setState(initialState);
             setEggChoice(initialState.eggVariant);
             setMessage('Pet woke up.');
@@ -196,29 +203,54 @@ export const useTamagotchi = (): TamagotchiViewModel => {
 
     const isSavingRef = useRef(false);
     const pendingSaveRef = useRef<string | null>(null);
+    const lastSavedStateRef = useRef<string | null>(null);
 
     // Persist state on every change, guarded by isLoaded to avoid overwriting
     // the saved state with defaults during the async load window.
     useEffect(() => {
         if (!isLoaded) return;
-        
+
+        const stateStr = JSON.stringify(state);
+        // Only queue save if state has actually changed to avoid hammering the bridge
+        if (stateStr === lastSavedStateRef.current) return;
+
         const saveQueue = async () => {
-            if (isSavingRef.current) return;
+            if (isSavingRef.current) {
+                pendingSaveRef.current = stateStr;
+                return;
+            }
             isSavingRef.current = true;
+            pendingSaveRef.current = stateStr;
             try {
+                // Ensure we use the absolute latest from the queue
                 while (pendingSaveRef.current) {
                     const toSave = pendingSaveRef.current;
                     pendingSaveRef.current = null;
                     await StorageService.update(STORAGE_KEY, toSave);
+                    lastSavedStateRef.current = toSave;
                 }
             } finally {
                 isSavingRef.current = false;
             }
         };
 
-        pendingSaveRef.current = JSON.stringify(state);
         void saveQueue();
     }, [state, isLoaded]);
+
+    // Cleanup: isolated visibility listener using stateRef for atomic persistence on close
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'hidden' && isLoaded) {
+                const latestStateStr = JSON.stringify(stateRef.current);
+                if (latestStateStr !== lastSavedStateRef.current) {
+                    void StorageService.update(STORAGE_KEY, latestStateStr);
+                    lastSavedStateRef.current = latestStateStr;
+                }
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }, [isLoaded]);
 
     useEffect(() => {
         playFlowRef.current = playFlow;
@@ -291,9 +323,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             const nextUserWins = flow.userWins + (result === 'win' ? 1 : 0);
             const nextPetWins = flow.petWins + (result === 'lose' ? 1 : 0);
             const nextRound = flow.round + 1;
-            const roundSummary = `R${flow.round}: you ${moveLabel[userMove]} vs pet ${moveLabel[petMove]} => ${
-                result === 'win' ? 'WIN' : result === 'lose' ? 'LOSE' : 'DRAW'
-            }`;
+            const roundSummary = `R${flow.round}: you ${moveLabel[userMove]} vs pet ${moveLabel[petMove]} => ${result === 'win' ? 'WIN' : result === 'lose' ? 'LOSE' : 'DRAW'
+                }`;
 
             const seriesClosed = nextUserWins >= 2 || nextPetWins >= 2 || flow.round >= 3;
             if (seriesClosed) {
@@ -371,11 +402,11 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         if (!engine) return;
 
         if (engine.getState().requiresEggSelection) {
-            if (event === 'egg_next') {
+            if (event === 'egg_next' || event === 'scroll_top' || event === 'scroll_bottom') {
                 cycleEggChoice();
                 return;
             }
-            if (event === 'egg_confirm') {
+            if (event === 'egg_confirm' || event === 'click' || event === 'double_click') {
                 const selectedEgg = eggChoiceRef.current;
                 const nextState = engine.chooseEgg(selectedEgg);
                 setState(nextState);
@@ -429,6 +460,11 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             setMessage('Choose an egg. NEXT to switch, OK to confirm.');
         }
     }, [state.requiresEggSelection, isLoaded]);
+
+    useEffect(() => {
+        if (!bridgeReady || !bridgeRef.current) return;
+        bridgeRef.current.setEggSelectionMode(state.requiresEggSelection).catch(() => { });
+    }, [state.requiresEggSelection, bridgeReady]);
 
     useEffect(() => {
         lastMascotKeyRef.current = null;
@@ -521,8 +557,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             playFlow.stage === 'select_move'
                 ? ['ROCK', 'PAPER', 'SCISSORS']
                 : playFlow.stage === 'result'
-                  ? ['OK', 'OK', 'OK']
-                : ['FEED', 'PLAY', 'CLEAN'];
+                    ? ['OK', 'OK', 'OK']
+                    : ['FEED', 'PLAY', 'CLEAN'];
         bridgeRef.current?.setActionLabels(labels).then(() => {
             lastMascotKeyRef.current = null;
             lastBarsKeyRef.current = null;
@@ -544,7 +580,15 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         if (lastBarsKeyRef.current === barsKey) return;
 
         let cancelled = false;
-        const sendBars = async () => {
+        const sendBars = async (force = false) => {
+            if (cancelled || !bridgeReady || barsPushInFlightRef.current) return;
+            const now = Date.now();
+            const keyChanged = lastBarsKeyRef.current !== barsKey;
+            if (!force && !keyChanged && now - lastBarsPushAtRef.current < IMAGE_POLL_INTERVAL_MS) {
+                return;
+            }
+
+            barsPushInFlightRef.current = true;
             try {
                 let imageData = barsImageCacheRef.current.get(barsKey);
                 if (!imageData) {
@@ -562,15 +606,23 @@ export const useTamagotchi = (): TamagotchiViewModel => {
                 const sent = await bridgeRef.current?.pushLifeBarFrame(Array.from(imageData));
                 if (sent) {
                     lastBarsKeyRef.current = barsKey;
+                    lastBarsPushAtRef.current = Date.now();
                 }
             } catch {
                 appendLog('[Hook] pushLifeBarFrame failed');
+            } finally {
+                barsPushInFlightRef.current = false;
             }
         };
 
-        void sendBars();
+        void sendBars(true);
+        const timer = setInterval(() => {
+            void sendBars();
+        }, IMAGE_POLL_INTERVAL_MS);
+
         return () => {
             cancelled = true;
+            clearInterval(timer);
         };
     }, [appendLog, bridgeReady, imageRefreshToken, playFlow.stage, state.happiness, state.health, state.hunger, state.poop]);
 
@@ -580,15 +632,15 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             playFlow.stage === 'select_game'
                 ? 'Select game\nRock Paper Scissors\nClick PLAY to start'
                 : playFlow.stage === 'select_move'
-                  ? `Round ${playFlow.round}\n` +
+                    ? `Round ${playFlow.round}\n` +
                     `Score ${playFlow.userWins} x ${playFlow.petWins}\n` +
                     `${state.petName} move: ${lastPetMoveLabel || '---'}\n` +
                     ''
-                  : playFlow.stage === 'result'
-                    ? `Result\nYou ${playFlow.userWins} x ${playFlow.petWins} ${state.petName}\n` +
-                      `${playFlow.userWins > playFlow.petWins ? 'YOU WON' : `${state.petName} WON`}\n` +
-                      'Click to return'
-                  : '';
+                    : playFlow.stage === 'result'
+                        ? `Result\nYou ${playFlow.userWins} x ${playFlow.petWins} ${state.petName}\n` +
+                        `${playFlow.userWins > playFlow.petWins ? 'YOU WON' : `${state.petName} WON`}\n` +
+                        'Click to return'
+                        : '';
         const dialogMode = playFlow.stage !== 'idle';
         bridgeRef.current?.pushDashboardTexts(state, playDialogHint, dialogMode, renderNowMs).catch(() => {
             appendLog('[Hook] pushDashboardTexts failed');
@@ -688,10 +740,10 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         playFlow.stage === 'select_game'
             ? 'Select game\nRock Paper Scissors\nClick PLAY to start'
             : playFlow.stage === 'select_move'
-              ? `Round ${playFlow.round}\nFEED Rock\nPLAY Paper\nCLEAN Scissors`
-              : playFlow.stage === 'result'
-                ? `Result\n${playFlow.userWins} x ${playFlow.petWins}\nClick to return`
-              : '';
+                ? `Round ${playFlow.round}\nFEED Rock\nPLAY Paper\nCLEAN Scissors`
+                : playFlow.stage === 'result'
+                    ? `Result\n${playFlow.userWins} x ${playFlow.petWins}\nClick to return`
+                    : '';
 
     return {
         state,

@@ -94,9 +94,6 @@ const resolveListIndex = (event: any): number | undefined => {
     const fromList = event?.listEvent?.currentSelectItemIndex;
     const fromJsonList = event?.jsonData?.listEvent?.currentSelectItemIndex;
     const fromJsonRoot = event?.jsonData?.currentSelectItemIndex;
-    // Padrão do clock: em evento de lista válido, índice ausente => 0
-    if (event?.listEvent !== undefined && (fromList === undefined || fromList === null)) return 0;
-    if (event?.jsonData?.listEvent !== undefined && (fromJsonList === undefined || fromJsonList === null)) return 0;
     const candidate = fromList ?? fromJsonList ?? fromJsonRoot;
     if (candidate === undefined || candidate === null) return undefined;
     const n = typeof candidate === 'number' ? candidate : Number(candidate);
@@ -129,7 +126,7 @@ export class EvenTamagotchiBridge {
     private hasImageContainer = false;
     private hasBarsImageContainer = false;
     private unsubscribeEvents: (() => void) | null = null;
-    private debugLog: DebugLogger = () => {};
+    private debugLog: DebugLogger = () => { };
     private imageUpdateQueue: Promise<boolean> = Promise.resolve(true);
     private uiMode: BridgeUiMode = 'default';
 
@@ -139,6 +136,12 @@ export class EvenTamagotchiBridge {
     private imagePushCount = 0;
     private lastExecuteAt = 0;
     private lastExecuteAction: MenuScreen | null = null;
+    private selectedEggIndex = 0;
+
+    private resetFocus(): void {
+        this.selectedAction = 'feed';
+        this.selectedEggIndex = 0;
+    }
 
     private log(message: string): void {
         const line = `[Bridge] ${message}`;
@@ -331,7 +334,7 @@ export class EvenTamagotchiBridge {
         onDebugLog?: DebugLogger,
         initialMode: BridgeUiMode = 'default',
     ): Promise<boolean> {
-        this.debugLog = onDebugLog ?? (() => {});
+        this.debugLog = onDebugLog ?? (() => { });
         this.pageCreated = false;
         this.hasImageContainer = false;
         this.hasBarsImageContainer = false;
@@ -351,7 +354,7 @@ export class EvenTamagotchiBridge {
                 this.log(
                     `device: model=${device?.model ?? 'unknown'} sn=${device?.sn ?? 'n/a'} status=${device?.status ?? 'n/a'}`,
                 );
-                
+
                 const user = await this.bridge.getUserInfo();
                 if (user) {
                     this.log(`user: name=${user.name} country=${user.country}`);
@@ -388,6 +391,9 @@ export class EvenTamagotchiBridge {
                 };
 
                 const idx = resolveListIndex(event);
+                if (idx !== undefined && this.uiMode === 'egg_selection') {
+                    this.selectedEggIndex = idx;
+                }
                 const selectedName = resolveListName(event);
                 const actionByIndex = normalizeActionByIndex(idx);
                 const actionByName = normalizeActionByName(selectedName);
@@ -400,9 +406,8 @@ export class EvenTamagotchiBridge {
                 const eventType = parseEventType(event);
                 if (eventType === undefined || eventType === null) {
                     if (this.uiMode === 'egg_selection' && isActionsListEvent(event)) {
-                        const selectedIdx = idx ?? 0;
-                        this.log(`event: undefined(egg-selection) idx=${selectedIdx}`);
-                        onInput(selectedIdx === 0 ? 'egg_next' : 'egg_confirm');
+                        this.log(`event: undefined(egg-selection) idx=${this.selectedEggIndex}`);
+                        onInput(this.selectedEggIndex === 0 ? 'egg_next' : 'egg_confirm');
                         return;
                     }
                     // Mesmo padrao do clock: tratar evento de lista sem eventType como interacao valida.
@@ -433,9 +438,8 @@ export class EvenTamagotchiBridge {
                 }
                 if (CLICK_EVENTS.has(eventType)) {
                     if (this.uiMode === 'egg_selection') {
-                        const selectedIdx = idx ?? 0;
-                        this.log(`event: click(egg-selection) idx=${selectedIdx}`);
-                        onInput(selectedIdx === 0 ? 'egg_next' : 'egg_confirm');
+                        this.log(`event: click(egg-selection) idx=${this.selectedEggIndex}`);
+                        onInput(this.selectedEggIndex === 0 ? 'egg_next' : 'egg_confirm');
                         return;
                     }
                     const action = actionFromEvent ?? this.selectedAction;
@@ -463,6 +467,7 @@ export class EvenTamagotchiBridge {
 
     async setEggSelectionMode(active: boolean): Promise<void> {
         this.uiMode = active ? 'egg_selection' : 'default';
+        this.resetFocus();
         if (!this.bridge || !this.pageCreated) return;
         const preferred = this.buildLayoutAttempts()[0];
         const ok = await this.bridge.rebuildPageContainer(new RebuildPageContainer(preferred.payload));
@@ -490,6 +495,7 @@ export class EvenTamagotchiBridge {
         }
 
         this.actionLabels = normalized;
+        this.resetFocus();
         const preferred = this.buildLayoutAttempts().find((a) => a.name === 'full(list-capture)')
             ?? this.buildLayoutAttempts()[0];
         const ok = await this.bridge.rebuildPageContainer(new RebuildPageContainer(preferred.payload));
@@ -605,13 +611,13 @@ export class EvenTamagotchiBridge {
 
         const content = dialogMode
             ? [
-                  'MINIGAME',
-                  ...toShortLines(safeHint),
-              ].join('\n')
+                'MINIGAME',
+                ...toShortLines(safeHint),
+            ].join('\n')
             : `NAME: ${safeName}\n` +
-              `AGE: ${ageHours}:${String(ageMinutes).padStart(2, '0')}:${String(ageSeconds).padStart(2, '0')}\n` +
-              `STATUS: ${status}` +
-              (safeHint ? `\n> ${toShortLines(safeHint, 26, 2).join('\n> ')}` : '');
+            `AGE: ${ageHours}:${String(ageMinutes).padStart(2, '0')}:${String(ageSeconds).padStart(2, '0')}\n` +
+            `STATUS: ${status}` +
+            (safeHint ? `\n> ${toShortLines(safeHint, 26, 2).join('\n> ')}` : '');
 
         const result = await this.bridge.textContainerUpgrade(
             new TextContainerUpgrade({

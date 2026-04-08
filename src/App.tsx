@@ -73,7 +73,7 @@ function App() {
                         label="Age"
                         value={`${Math.floor(state.ageMinutes / 60)}:${String(
                             state.ageMinutes % 60
-                        ).padStart(2, '0')}:00`}
+                        )}`}
                     />
                     <DetailBox label="Hunger" value={`${state.hunger}/4`} />
                     <DetailBox label="Happiness" value={`${state.happiness}/4`} />
@@ -95,18 +95,18 @@ function App() {
                             placeholder="Pet name (max 12)"
                         />
                         <button
-                            
+
                             className="primary-button text-black"
                             onClick={() => setPetName(petNameInput)}
                         >
                             Save name
                         </button>
-                        <button
+                        {/* <button
                             className="primary-button text-black"
                             onClick={() => fastForward(60)}
                         >
                             Advance +1h
-                        </button>
+                        </button> */}
 
                         <button
                             className="secondary-button text-black"
