@@ -13,7 +13,7 @@
         "sim": "evenhub-simulator http://localhost:5173 && vite"
     },
     "dependencies": {
-        "@evenrealities/even_hub_sdk": "^0.0.9",
+        "@evenrealities/even_hub_sdk": "^0.0.10",
         "lucide-react": "^0.474.0",
         "react": "^18.3.1",
         "react-dom": "^18.3.1"

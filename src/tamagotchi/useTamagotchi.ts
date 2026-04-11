@@ -149,6 +149,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     const screenIndexRef = useRef(0);
     const playFlowRef = useRef<PlayFlowState>(IDLE_PLAY_FLOW);
 
+    const [imageRefreshToken, setImageRefreshToken] = useState(0);
+
     const [state, setState] = useState<TamagotchiState>(() => TamagotchiEngine.parseState(null));
     const stateRef = useRef<TamagotchiState>(state);
     stateRef.current = state;
@@ -161,7 +163,6 @@ export const useTamagotchi = (): TamagotchiViewModel => {
     const [debugLogs, setDebugLogs] = useState<string[]>([]);
     const [playFlow, setPlayFlow] = useState<PlayFlowState>(IDLE_PLAY_FLOW);
     const [lastPetMoveLabel, setLastPetMoveLabel] = useState<string>('');
-    const [imageRefreshToken, setImageRefreshToken] = useState(0);
     const [renderNowMs, setRenderNowMs] = useState<number>(() => Date.now());
     const [eggChoice, setEggChoice] = useState<EggVariant>(() => state.eggVariant);
     const eggChoiceRef = useRef<EggVariant>(state.eggVariant);
@@ -294,7 +295,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         }
 
         if (flow.stage === 'select_game') {
-            if (screen === 'play') {
+            if (screen === 'play' || screen === 'minigame_play') {
                 const nextFlow: PlayFlowState = {
                     stage: 'select_move',
                     round: 1,
@@ -303,60 +304,8 @@ export const useTamagotchi = (): TamagotchiViewModel => {
                 };
                 playFlowRef.current = nextFlow;
                 setPlayFlow(nextFlow);
-                setMessage('RPS R1: FEED=ROCK | PLAY=PAPER | CLEAN=SCISSORS');
-            } else {
-                setMessage('Single game: select PLAY to start RPS.');
+                setMessage('RPS R1: Choose your move!');
             }
-            return;
-        }
-
-        if (flow.stage === 'select_move') {
-            const userMove = menuToMove(screen);
-            if (!userMove) {
-                setMessage('Use FEED/PLAY/CLEAN to choose a move.');
-                return;
-            }
-
-            const petMove = randomPetMove();
-            const result = decideRound(userMove, petMove);
-            setLastPetMoveLabel(moveLabel[petMove]);
-            const nextUserWins = flow.userWins + (result === 'win' ? 1 : 0);
-            const nextPetWins = flow.petWins + (result === 'lose' ? 1 : 0);
-            const nextRound = flow.round + 1;
-            const roundSummary = `R${flow.round}: you ${moveLabel[userMove]} vs pet ${moveLabel[petMove]} => ${result === 'win' ? 'WIN' : result === 'lose' ? 'LOSE' : 'DRAW'
-                }`;
-
-            const seriesClosed = nextUserWins >= 2 || nextPetWins >= 2 || flow.round >= 3;
-            if (seriesClosed) {
-                const userWonSeries = nextUserWins >= 2;
-                const reward = engine.applyPlaySeriesReward(userWonSeries);
-                const nextState = engine.getState();
-                setState(nextState);
-                const resultFlow: PlayFlowState = {
-                    stage: 'result',
-                    round: flow.round,
-                    userWins: nextUserWins,
-                    petWins: nextPetWins,
-                };
-                playFlowRef.current = resultFlow;
-                setPlayFlow(resultFlow);
-                setMessage(
-                    `${roundSummary} | Final ${nextUserWins}x${nextPetWins}. ${reward.message} Click to return.`,
-                );
-                return;
-            }
-
-            const nextFlow: PlayFlowState = {
-                stage: 'select_move',
-                round: nextRound,
-                userWins: nextUserWins,
-                petWins: nextPetWins,
-            };
-            playFlowRef.current = nextFlow;
-            setPlayFlow(nextFlow);
-            setMessage(
-                `${roundSummary} | Score ${nextUserWins}x${nextPetWins}. R${nextRound}: FEED/PLAY/CLEAN.`,
-            );
             return;
         }
 
@@ -375,6 +324,41 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         }
 
         let result: TamagotchiActionResult = { changed: false, message: 'No action on this screen.' };
+        
+        // Se recebermos rock/paper/scissors diretamente, mapeamos para as jogadas do minigame
+        if (screen === 'rock' || screen === 'paper' || screen === 'scissors') {
+            // Se estivermos no estágio de movimento, processamos a jogada
+            if (flow.stage === 'select_move') {
+                const userMove = screen as RpsMove;
+                const petMove = randomPetMove();
+                const resultRound = decideRound(userMove, petMove);
+                setLastPetMoveLabel(moveLabel[petMove]);
+                const nextUserWins = flow.userWins + (resultRound === 'win' ? 1 : 0);
+                const nextPetWins = flow.petWins + (resultRound === 'lose' ? 1 : 0);
+                const nextRound = flow.round + 1;
+                const roundSummary = `R${flow.round}: ${moveLabel[userMove]} vs ${moveLabel[petMove]} => ${resultRound === 'win' ? 'WIN' : resultRound === 'lose' ? 'LOSE' : 'DRAW'}`;
+
+                const seriesClosed = nextUserWins >= 2 || nextPetWins >= 2 || flow.round >= 3;
+                if (seriesClosed) {
+                    const userWonSeries = nextUserWins >= 2;
+                    const reward = engine.applyPlaySeriesReward(userWonSeries);
+                    const nextState = engine.getState();
+                    setState(nextState);
+                    const resultFlow: PlayFlowState = { stage: 'result', round: flow.round, userWins: nextUserWins, petWins: nextPetWins };
+                    playFlowRef.current = resultFlow;
+                    setPlayFlow(resultFlow);
+                    setMessage(`${roundSummary} | Final ${nextUserWins}x${nextPetWins}. ${reward.message}`);
+                    return;
+                }
+
+                const nextFlow: PlayFlowState = { stage: 'select_move', round: nextRound, userWins: nextUserWins, petWins: nextPetWins };
+                playFlowRef.current = nextFlow;
+                setPlayFlow(nextFlow);
+                setMessage(`${roundSummary}. R${nextRound}: Choose!`);
+                return;
+            }
+        }
+
         switch (screen) {
             case 'feed':
                 result = engine.feed();
@@ -402,11 +386,13 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         if (!engine) return;
 
         if (engine.getState().requiresEggSelection) {
+            // Se clicar em NEXT (vindo do Bridge como egg_next ou clique no índice 0)
             if (event === 'egg_next' || event === 'scroll_top' || event === 'scroll_bottom') {
                 cycleEggChoice();
                 return;
             }
-            if (event === 'egg_confirm' || event === 'click' || event === 'double_click') {
+            // Se clicar em OK (vindo do Bridge como egg_confirm ou clique no índice 1)
+            if (event === 'egg_confirm') {
                 const selectedEgg = eggChoiceRef.current;
                 const nextState = engine.chooseEgg(selectedEgg);
                 setState(nextState);
@@ -425,7 +411,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             setMessage('Next menu.');
             return;
         }
-        if (event === 'double_click') {
+        if (event === 'double_click' || event === 'minigame_menu' || event === 'minigame_back') {
             if (playFlowRef.current.stage !== 'idle') {
                 playFlowRef.current = IDLE_PLAY_FLOW;
                 setPlayFlow(IDLE_PLAY_FLOW);
@@ -437,7 +423,24 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             setMessage('Returned to status.');
             return;
         }
-    }, [cycleEggChoice, cycleScreen]);
+
+        if (event === 'minigame_play' || event === 'minigame_replay') {
+            if (playFlowRef.current.stage === 'select_game' || playFlowRef.current.stage === 'result') {
+                executeAction('play');
+            }
+            return;
+        }
+
+        if (event === 'minigame_select_rps') {
+            executeAction('play'); // Inicia Jokenpo
+            return;
+        }
+
+        if (event === 'minigame_select_tictactoe') {
+            setMessage('Tic Tac Toe not implemented yet.');
+            return;
+        }
+    }, [cycleEggChoice, cycleScreen, executeAction]);
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -463,8 +466,31 @@ export const useTamagotchi = (): TamagotchiViewModel => {
 
     useEffect(() => {
         if (!bridgeReady || !bridgeRef.current) return;
-        bridgeRef.current.setEggSelectionMode(state.requiresEggSelection).catch(() => { });
-    }, [state.requiresEggSelection, bridgeReady]);
+
+        let mode: any = 'main_menu';
+        if (state.requiresEggSelection) {
+            mode = 'egg_selection';
+        } else if (playFlow.stage === 'select_game') {
+            mode = 'minigame_selection';
+        } else if (playFlow.stage === 'select_move') {
+            mode = 'minigame_choice';
+        } else if (playFlow.stage === 'result') {
+            mode = 'minigame_result';
+        }
+
+        bridgeRef.current.setUiMode(mode)
+            .then((ok) => {
+                if (ok) {
+                    // Após cada troca de layout bem-sucedida, limpamos o cache de envio
+                    // e forçamos o reenvio das imagens binárias compatíveis com o novo layout
+                    lastMascotKeyRef.current = null;
+                    lastBarsKeyRef.current = null;
+                    setImageRefreshToken(v => v + 1);
+                }
+            })
+            .catch(() => { });
+    }, [state.requiresEggSelection, playFlow.stage, bridgeReady]);
+
 
     useEffect(() => {
         lastMascotKeyRef.current = null;
@@ -476,14 +502,27 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         bridge
             .init(
                 onEvenInput,
-                (screen) => setScreenIndex(SCREENS.indexOf(screen)),
-                executeAction,
+                (screen) => {
+                    const idx = SCREENS.indexOf(screen as MenuScreen);
+                    if (idx !== -1) setScreenIndex(idx);
+                },
+                (action) => {
+                    const screen = action as MenuScreen;
+                    // Aceita telas do menu OU comandos de minigame (rock, paper, scissors)
+                    if (SCREENS.includes(screen) || ['rock', 'paper', 'scissors'].includes(action) || ['play', 'feed', 'clean'].includes(action)) {
+                        executeAction(action as any);
+                    } else {
+                        appendLog(`[Hook] non-menu action received: ${action}`);
+                    }
+                },
                 appendLog,
-                state.requiresEggSelection ? 'egg_selection' : 'default',
+                stateRef.current.requiresEggSelection ? 'egg_selection' : 'main_menu',
             )
             .then((ready) => {
                 setBridgeReady(ready);
                 appendLog(`[Hook] bridge ready=${ready}`);
+                // Força refresh total de imagens binárias após inicialização
+                setImageRefreshToken(v => v + 1);
             })
             .catch(() => {
                 setBridgeReady(false);
@@ -495,12 +534,15 @@ export const useTamagotchi = (): TamagotchiViewModel => {
             setBridgeReady(false);
             bridge.destroy();
         };
-    }, [appendLog, executeAction, onEvenInput, state.requiresEggSelection]);
+    }, [appendLog, executeAction, onEvenInput]);
 
     useEffect(() => {
         let cancelled = false;
         const pollAndSendMascot = async (force = false) => {
             if (cancelled || !bridgeReady || mascotPushInFlightRef.current) return;
+            // Verifica se o layout atual suporta a imagem do Pet
+            if (!bridgeRef.current?.hasPetImage()) return;
+
             const now = Date.now();
             const keyChanged = lastMascotKeyRef.current !== currentMascotKey;
             if (!force && !keyChanged && now - lastMascotPushAtRef.current < IMAGE_POLL_INTERVAL_MS) {
@@ -550,23 +592,6 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         };
     }, [appendLog, bridgeReady, currentMascotKey, currentMascotUrl, imageRefreshToken]);
 
-    useEffect(() => {
-        if (!bridgeReady) return;
-        if (state.requiresEggSelection) return;
-        const labels: [string, string, string] =
-            playFlow.stage === 'select_move'
-                ? ['ROCK', 'PAPER', 'SCISSORS']
-                : playFlow.stage === 'result'
-                    ? ['OK', 'OK', 'OK']
-                    : ['FEED', 'PLAY', 'CLEAN'];
-        bridgeRef.current?.setActionLabels(labels).then(() => {
-            lastMascotKeyRef.current = null;
-            lastBarsKeyRef.current = null;
-            setImageRefreshToken((value) => value + 1);
-        }).catch(() => {
-            appendLog('[Hook] setActionLabels failed');
-        });
-    }, [appendLog, bridgeReady, playFlow.stage, state.requiresEggSelection]);
 
     useEffect(() => {
         if (!bridgeReady) return;
@@ -582,6 +607,9 @@ export const useTamagotchi = (): TamagotchiViewModel => {
         let cancelled = false;
         const sendBars = async (force = false) => {
             if (cancelled || !bridgeReady || barsPushInFlightRef.current) return;
+            // Verifica se o layout atual suporta a Barra de Vida
+            if (!bridgeRef.current?.hasBarsImage()) return;
+
             const now = Date.now();
             const keyChanged = lastBarsKeyRef.current !== barsKey;
             if (!force && !keyChanged && now - lastBarsPushAtRef.current < IMAGE_POLL_INTERVAL_MS) {
@@ -642,7 +670,7 @@ export const useTamagotchi = (): TamagotchiViewModel => {
                         'Click to return'
                         : '';
         const dialogMode = playFlow.stage !== 'idle';
-        bridgeRef.current?.pushDashboardTexts(state, playDialogHint, dialogMode, renderNowMs).catch(() => {
+        bridgeRef.current?.pushDashboardTexts(state, dialogMode ? playDialogHint : undefined).catch(() => {
             appendLog('[Hook] pushDashboardTexts failed');
         });
         return () => {

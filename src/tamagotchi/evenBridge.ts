@@ -13,134 +13,108 @@ import {
 } from '@evenrealities/even_hub_sdk';
 import type { MenuScreen, TamagotchiState } from './types';
 
+// Eventos enviados para a sua aplicação principal
 export type EvenInputEvent =
     | 'scroll_top'
     | 'scroll_bottom'
     | 'click'
     | 'double_click'
     | 'egg_next'
-    | 'egg_confirm';
-// Bridge types for better alignment
+    | 'egg_confirm'
+    | 'minigame_select_rps'
+    | 'minigame_select_tictactoe'
+    | 'minigame_play'
+    | 'minigame_back'
+    | 'minigame_replay'
+    | 'minigame_menu';
+
 type DebugLogger = (message: string) => void;
-type BridgeUiMode = 'default' | 'egg_selection';
+
+// Todas as telas do nosso jogo
+export type BridgeUiMode = 'default' | 'main_menu' | 'egg_selection' | 'minigame_selection' | 'minigame_start' | 'minigame_choice' | 'minigame_result';
 
 type LayoutAttempt = {
-    name: string;
-    payload: {
-        containerTotalNum: number;
-        textObject?: TextContainerProperty[];
-        listObject?: ListContainerProperty[];
-        imageObject?: ImageContainerProperty[];
-    };
+    name: BridgeUiMode;
+    payload: any;
     hasImage: boolean;
     hasBarsImage: boolean;
 };
 
+// Mapeamentos de ações
 const ACTIONS: MenuScreen[] = ['feed', 'play', 'clean'];
 
-const CLICK_EVENTS = new Set<any>([
-    OsEventTypeList.CLICK_EVENT,
-    'CLICK_EVENT',
-    'CLICK',
-    0,
-]);
+// Constantes de Eventos do SDK
+const CLICK_EVENTS = new Set<any>([OsEventTypeList.CLICK_EVENT, 'CLICK_EVENT', 'CLICK', 0]);
+const SCROLL_TOP_EVENTS = new Set<any>([OsEventTypeList.SCROLL_TOP_EVENT, 'SCROLL_TOP_EVENT', 'SCROLL_TOP', 1]);
+const SCROLL_BOTTOM_EVENTS = new Set<any>([OsEventTypeList.SCROLL_BOTTOM_EVENT, 'SCROLL_BOTTOM_EVENT', 'SCROLL_BOTTOM', 2]);
+const DOUBLE_CLICK_EVENTS = new Set<any>([OsEventTypeList.DOUBLE_CLICK_EVENT, 'DOUBLE_CLICK_EVENT', 'DOUBLE_CLICK', 3]);
 
-const SCROLL_TOP_EVENTS = new Set<any>([
-    OsEventTypeList.SCROLL_TOP_EVENT,
-    'SCROLL_TOP_EVENT',
-    'SCROLL_TOP',
-    1,
-]);
+const parseEventType = (event: any): number => {
+    const type =
+        event?.sysEvent?.eventType ??
+        event?.listEvent?.eventType ??
+        event?.textEvent?.eventType ??
+        event?.jsonData?.sysEvent?.eventType ??
+        event?.jsonData?.listEvent?.eventType ??
+        event?.jsonData?.textEvent?.eventType;
 
-const SCROLL_BOTTOM_EVENTS = new Set<any>([
-    OsEventTypeList.SCROLL_BOTTOM_EVENT,
-    'SCROLL_BOTTOM_EVENT',
-    'SCROLL_BOTTOM',
-    2,
-]);
-
-const DOUBLE_CLICK_EVENTS = new Set<any>([
-    OsEventTypeList.DOUBLE_CLICK_EVENT,
-    'DOUBLE_CLICK_EVENT',
-    'DOUBLE_CLICK',
-    3,
-]);
-
-const parseEventType = (event: any): string | number | undefined =>
-    event?.sysEvent?.eventType ??
-    event?.listEvent?.eventType ??
-    event?.textEvent?.eventType ??
-    event?.jsonData?.sysEvent?.eventType ??
-    event?.jsonData?.listEvent?.eventType ??
-    event?.jsonData?.textEvent?.eventType;
-
-const normalizeActionByIndex = (rawIndex: unknown): MenuScreen | null => {
-    const n = typeof rawIndex === 'number' ? rawIndex : Number(rawIndex);
-    if (!Number.isFinite(n)) return null;
-    const idx = Math.max(0, Math.min(ACTIONS.length - 1, n));
-    return ACTIONS[idx] ?? null;
-};
-
-const normalizeActionByName = (rawName: unknown): MenuScreen | null => {
-    if (typeof rawName !== 'string') return null;
-    const normalized = rawName.toUpperCase();
-    if (normalized.includes('FEED')) return 'feed';
-    if (normalized.includes('PLAY')) return 'play';
-    if (normalized.includes('CLEAN')) return 'clean';
-    return null;
+    if (type === undefined || type === null) return 0;
+    return Number(type);
 };
 
 const resolveListIndex = (event: any): number | undefined => {
-    const fromList = event?.listEvent?.currentSelectItemIndex;
-    const fromJsonList = event?.jsonData?.listEvent?.currentSelectItemIndex;
-    const fromJsonRoot = event?.jsonData?.currentSelectItemIndex;
-    const candidate = fromList ?? fromJsonList ?? fromJsonRoot;
-    if (candidate === undefined || candidate === null) return undefined;
-    const n = typeof candidate === 'number' ? candidate : Number(candidate);
-    return Number.isFinite(n) ? n : undefined;
-};
+    const candidate =
+        event?.currentSelectItemIndex ??
+        event?.listEvent?.currentSelectItemIndex ??
+        event?.listEvent?.itemIndex ??
+        event?.textEvent?.currentSelectItemIndex ??
+        event?.jsonData?.currentSelectItemIndex ??
+        event?.jsonData?.listEvent?.currentSelectItemIndex ??
+        event?.jsonData?.listEvent?.itemIndex ??
+        event?.jsonData?.textEvent?.currentSelectItemIndex;
 
-const resolveListName = (event: any): string | undefined => {
-    return (
-        event?.listEvent?.currentSelectItemName ??
-        event?.jsonData?.listEvent?.currentSelectItemName ??
-        event?.jsonData?.currentSelectItemName
-    );
-};
+    if (candidate !== undefined && candidate !== null) {
+        const n = Number(candidate);
+        if (Number.isFinite(n)) return n;
+    }
 
-const isActionsListEvent = (event: any): boolean => {
-    const byListName =
-        event?.listEvent?.containerName === 'actionsList' ||
-        event?.jsonData?.listEvent?.containerName === 'actionsList';
-    const byContainerName = event?.jsonData?.containerName === 'actionsList';
-    const byContainerId =
-        event?.listEvent?.containerID === 3 ||
-        event?.jsonData?.listEvent?.containerID === 3 ||
-        event?.jsonData?.containerID === 3;
-    return Boolean(byListName || byContainerName || byContainerId);
+    const isListEvent = event?.listEvent || event?.jsonData?.listEvent;
+    if (isListEvent) return 0;
+
+    return undefined;
 };
 
 export class EvenTamagotchiBridge {
     private bridge: EvenAppBridge | null = null;
     private pageCreated = false;
+    private startupCreated = false;
     private hasImageContainer = false;
     private hasBarsImageContainer = false;
     private unsubscribeEvents: (() => void) | null = null;
     private debugLog: DebugLogger = () => { };
     private imageUpdateQueue: Promise<boolean> = Promise.resolve(true);
-    private uiMode: BridgeUiMode = 'default';
 
-    private selectedAction: MenuScreen = 'feed';
+    private uiMode: BridgeUiMode = 'main_menu';
     private actionLabels: [string, string, string] = ['FEED', 'PLAY', 'CLEAN'];
-    private textPushCount = 0;
-    private imagePushCount = 0;
-    private lastExecuteAt = 0;
-    private lastExecuteAction: MenuScreen | null = null;
-    private selectedEggIndex = 0;
 
-    private resetFocus(): void {
-        this.selectedAction = 'feed';
+    // Controles de foco separados para não misturar índices ao trocar de tela
+    private selectedMainIndex = 0;
+    private selectedEggIndex = 0;
+    private selectedMinigameSelectionIndex = 0;
+    private selectedMinigameStartIndex = 0;
+    private selectedMinigameChoiceIndex = 0;
+    private selectedMinigameResultIndex = 0;
+
+    private lastExecuteAt = 0;
+    private lastExecuteAction: string | null = null;
+
+    private resetAllFocus(): void {
+        this.selectedMainIndex = 0;
         this.selectedEggIndex = 0;
+        this.selectedMinigameSelectionIndex = 0;
+        this.selectedMinigameStartIndex = 0;
+        this.selectedMinigameChoiceIndex = 0;
+        this.selectedMinigameResultIndex = 0;
     }
 
     private log(message: string): void {
@@ -149,505 +123,348 @@ export class EvenTamagotchiBridge {
         console.log(line);
     }
 
-    private buildLayoutAttempts(): LayoutAttempt[] {
-        if (this.uiMode === 'egg_selection') {
-            const textBase = {
-                containerID: 2,
-                containerName: 'statsText',
-                xPosition: 192,
-                yPosition: 154,
-                width: 220,
-                height: 28,
-                content: 'CHOOSE EGG',
-            } as const;
+    // ========================================================================
+    // 🎨 CONSTRUTORES DE LAYOUT (Sempre 4 containers para Rebuild seguro)
+    // IDs: 1=ImgPet, 2=Texto, 3=Lista, 4=ImgBarra
+    // ========================================================================
 
-            const listBase = {
-                containerID: 3,
-                containerName: 'actionsList',
-                xPosition: 198,
-                yPosition: 198,
-                width: 180,
-                height: 74,
-                itemContainer: new ListItemContainerProperty({
-                    itemCount: 2,
-                    itemWidth: 180,
-                    itemName: ['NEXT', 'OK'],
-                    isItemSelectBorderEn: 1,
-                }),
-            } as const;
-
-            const image = new ImageContainerProperty({
-                containerID: 1,
-                containerName: 'petImg',
-                xPosition: 197,
-                yPosition: 40,
-                width: 182,
-                height: 91,
-            });
-
-            return [
-                {
-                    name: 'egg-selection',
-                    hasImage: true,
-                    hasBarsImage: false,
+    private getLayout(mode: BridgeUiMode): LayoutAttempt {
+        switch (mode) {
+            case 'egg_selection':
+                return {
+                    name: 'egg_selection', hasImage: true, hasBarsImage: false,
                     payload: {
                         containerTotalNum: 3,
-                        textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 0 })],
-                        listObject: [new ListContainerProperty({ ...listBase, isEventCapture: 1 })],
-                        imageObject: [image],
-                    },
-                },
-            ];
+                        textObject: [new TextContainerProperty({ containerID: 2, containerName: 'statsText', xPosition: 300, yPosition: 154, width: 220, height: 28, content: 'CHOOSE EGG', isEventCapture: 0 })],
+                        listObject: [new ListContainerProperty({ containerID: 3, containerName: 'actionsList', xPosition: 250, yPosition: 190, width: 180, height: 75, isEventCapture: 1, itemContainer: new ListItemContainerProperty({ itemCount: 2, itemWidth: 0, itemName: ['NEXT', 'OK'], isItemSelectBorderEn: 1 }) })],
+                        imageObject: [new ImageContainerProperty({ containerID: 1, containerName: 'petImg', xPosition: 197, yPosition: 40, width: 182, height: 91 })]
+                    }
+                };
+
+            case 'minigame_selection':
+                return {
+                    name: 'minigame_selection', hasImage: true, hasBarsImage: false,
+                    payload: {
+                        containerTotalNum: 3,
+                        textObject: [new TextContainerProperty({ containerID: 2, containerName: 'statsText', xPosition: 300, yPosition: 22, width: 250, height: 110, content: 'CHOOSE GAME', isEventCapture: 0 })],
+                        listObject: [new ListContainerProperty({ containerID: 3, containerName: 'actionsList', xPosition: 65, yPosition: 100, width: 180, height: 150, isEventCapture: 1, itemContainer: new ListItemContainerProperty({ itemCount: 2, itemWidth: 0, itemName: ['JOKENPO', 'TIC TAC TOE'], isItemSelectBorderEn: 1 }) })],
+                        imageObject: [new ImageContainerProperty({ containerID: 1, containerName: 'petImg', xPosition: 30, yPosition: 10, width: 182, height: 91 })]
+                    }
+                };
+
+            case 'minigame_start':
+                return {
+                    name: 'minigame_start', hasImage: true, hasBarsImage: false,
+                    payload: {
+                        containerTotalNum: 3,
+                        textObject: [new TextContainerProperty({ containerID: 2, containerName: 'statsText', xPosition: 300, yPosition: 22, width: 250, height: 110, content: 'READY?', isEventCapture: 0 })],
+                        listObject: [new ListContainerProperty({ containerID: 3, containerName: 'actionsList', xPosition: 65, yPosition: 100, width: 180, height: 100, isEventCapture: 1, itemContainer: new ListItemContainerProperty({ itemCount: 2, itemWidth: 0, itemName: ['START', 'BACK'], isItemSelectBorderEn: 1 }) })],
+                        imageObject: [new ImageContainerProperty({ containerID: 1, containerName: 'petImg', xPosition: 30, yPosition: 10, width: 182, height: 91 })]
+                    }
+                };
+
+            case 'minigame_choice':
+                return {
+                    name: 'minigame_choice', hasImage: true, hasBarsImage: false,
+                    payload: {
+                        containerTotalNum: 3,
+                        textObject: [new TextContainerProperty({ containerID: 2, containerName: 'statsText', xPosition: 300, yPosition: 22, width: 250, height: 110, content: 'CHOOSE', isEventCapture: 0 })],
+                        listObject: [new ListContainerProperty({ containerID: 3, containerName: 'actionsList', xPosition: 65, yPosition: 100, width: 180, height: 150, isEventCapture: 1, itemContainer: new ListItemContainerProperty({ itemCount: 3, itemWidth: 0, itemName: ['ROCK', 'PAPER', 'SCISSORS'], isItemSelectBorderEn: 1 }) })],
+                        imageObject: [new ImageContainerProperty({ containerID: 1, containerName: 'petImg', xPosition: 30, yPosition: 10, width: 182, height: 91 })]
+                    }
+                };
+
+            case 'minigame_result':
+                return {
+                    name: 'minigame_result', hasImage: true, hasBarsImage: false,
+                    payload: {
+                        containerTotalNum: 3,
+                        textObject: [new TextContainerProperty({ containerID: 2, containerName: 'statsText', xPosition: 300, yPosition: 22, width: 250, height: 110, content: 'RESULT', isEventCapture: 0 })],
+                        listObject: [new ListContainerProperty({ containerID: 3, containerName: 'actionsList', xPosition: 65, yPosition: 100, width: 180, height: 100, isEventCapture: 1, itemContainer: new ListItemContainerProperty({ itemCount: 2, itemWidth: 0, itemName: ['PLAY AGAIN', 'MENU'], isItemSelectBorderEn: 1 }) })],
+                        imageObject: [new ImageContainerProperty({ containerID: 1, containerName: 'petImg', xPosition: 30, yPosition: 10, width: 182, height: 91 })]
+                    }
+                };
+
+            case 'main_menu':
+            case 'default':
+            default:
+                return {
+                    name: 'main_menu', hasImage: true, hasBarsImage: true,
+                    payload: {
+                        containerTotalNum: 4,
+                        textObject: [new TextContainerProperty({ containerID: 2, containerName: 'statsText', xPosition: 300, yPosition: 126, width: 250, height: 110, content: 'NAME: G2 PET\nAGE: 0:00:00\nSTATUS: GOOD', isEventCapture: 0 })],
+                        listObject: [new ListContainerProperty({ containerID: 3, containerName: 'actionsList', xPosition: 65, yPosition: 100, width: 180, height: 150, isEventCapture: 1, itemContainer: new ListItemContainerProperty({ itemCount: 3, itemWidth: 0, itemName: this.actionLabels, isItemSelectBorderEn: 1 }) })],
+                        imageObject: [
+                            new ImageContainerProperty({ containerID: 1, containerName: 'petImg', xPosition: 10, yPosition: 10, width: 182, height: 91 }),
+                            new ImageContainerProperty({ containerID: 4, containerName: 'lifeBarImg', xPosition: 300, yPosition: 20, width: 132, height: 100 })
+                        ]
+                    }
+                };
         }
-
-        const textBase = {
-            containerID: 2,
-            containerName: 'statsText',
-            xPosition: 306,
-            yPosition: 126,
-            width: 250,
-            height: 110,
-            content:
-                'NAME: G2 PET\n' +
-                'AGE: 0:00:00\n' +
-                'STATUS: GOOD',
-        } as const;
-
-        const listBase = {
-            containerID: 3,
-            containerName: 'actionsList',
-            xPosition: 24,
-            yPosition: 104,
-            width: 180,
-            height: 150,
-            itemContainer: new ListItemContainerProperty({
-                itemCount: 3,
-                itemWidth: 180,
-                itemName: [...this.actionLabels],
-                isItemSelectBorderEn: 1,
-            }),
-        } as const;
-
-        const image = new ImageContainerProperty({
-            containerID: 1,
-            containerName: 'petImg',
-            xPosition: 30,
-            yPosition: 10,
-            width: 182,
-            height: 91,
-        });
-
-        const lifeBarImage = new ImageContainerProperty({
-            containerID: 4,
-            containerName: 'lifeBarImg',
-            xPosition: 306,
-            yPosition: 22,
-            width: 132,
-            height: 100,
-        });
-
-        return [
-            {
-                name: 'full(list-capture)',
-                hasImage: true,
-                hasBarsImage: true,
-                payload: {
-                    containerTotalNum: 4,
-                    textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 0 })],
-                    listObject: [new ListContainerProperty({ ...listBase, isEventCapture: 1 })],
-                    imageObject: [image, lifeBarImage],
-                },
-            },
-            {
-                name: 'full(text-capture)',
-                hasImage: true,
-                hasBarsImage: true,
-                payload: {
-                    containerTotalNum: 4,
-                    textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
-                    listObject: [new ListContainerProperty({ ...listBase, isEventCapture: 0 })],
-                    imageObject: [image, lifeBarImage],
-                },
-            },
-            {
-                name: 'fallback(text+list)',
-                hasImage: false,
-                hasBarsImage: false,
-                payload: {
-                    containerTotalNum: 2,
-                    textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 0 })],
-                    listObject: [new ListContainerProperty({ ...listBase, isEventCapture: 1 })],
-                },
-            },
-            {
-                name: 'fallback(text+image)',
-                hasImage: true,
-                hasBarsImage: true,
-                payload: {
-                    containerTotalNum: 3,
-                    textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
-                    imageObject: [image, lifeBarImage],
-                },
-            },
-            {
-                name: 'fallback(text-only)',
-                hasImage: false,
-                hasBarsImage: false,
-                payload: {
-                    containerTotalNum: 1,
-                    textObject: [new TextContainerProperty({ ...textBase, isEventCapture: 1 })],
-                },
-            },
-        ];
     }
 
-    private async tryCreateLayout(attempt: LayoutAttempt): Promise<boolean> {
-        if (!this.bridge) return false;
-        this.log(`createStartUpPageContainer called (${attempt.name})`);
-        const createResult = await this.bridge.createStartUpPageContainer(
-            new CreateStartUpPageContainer(attempt.payload),
-        );
-        this.log(`createStartUpPageContainer result=${String(createResult)} (${attempt.name})`);
-        if (createResult === 0) {
-            this.hasImageContainer = attempt.hasImage;
-            this.hasBarsImageContainer = attempt.hasBarsImage;
-            return true;
-        }
+    // ========================================================================
+    // ⚙️ GESTÃO DE LAYOUTS E TRANSIÇÕES
+    // ========================================================================
 
-        this.log(`trying rebuildPageContainer fallback (${attempt.name})`);
-        const rebuildOk = await this.bridge.rebuildPageContainer(
-            new RebuildPageContainer(attempt.payload),
-        );
-        this.log(`rebuildPageContainer result=${String(rebuildOk)} (${attempt.name})`);
-        if (rebuildOk) {
-            this.hasImageContainer = attempt.hasImage;
-            this.hasBarsImageContainer = attempt.hasBarsImage;
-            return true;
+    private async buildLayout(attempt: LayoutAttempt): Promise<boolean> {
+        if (!this.bridge) return false;
+
+        try {
+            if (!this.startupCreated) {
+                this.log(`Executando StartUp: ${attempt.name}`);
+                const startUpParam = new CreateStartUpPageContainer(attempt.payload);
+                const createResult = await this.bridge.createStartUpPageContainer(startUpParam);
+
+                if (createResult === 0 || createResult === true) {
+                    this.startupCreated = true;
+                    this.hasImageContainer = attempt.hasImage;
+                    this.hasBarsImageContainer = attempt.hasBarsImage;
+                    return true;
+                }
+            }
+
+            this.log(`Executando Rebuild: ${attempt.name}`);
+            const rebuildParam = new RebuildPageContainer(attempt.payload);
+            const rebuildResult = await this.bridge.rebuildPageContainer(rebuildParam);
+
+            if (rebuildResult === 0 || rebuildResult === true) {
+                this.hasImageContainer = attempt.hasImage;
+                this.hasBarsImageContainer = attempt.hasBarsImage;
+                return true;
+            }
+        } catch (e) {
+            this.log(`Falha no Layout: ${e}`);
         }
         return false;
     }
 
+    async setUiMode(mode: BridgeUiMode): Promise<boolean> {
+        this.uiMode = mode;
+        this.resetAllFocus();
+        if (!this.bridge || !this.pageCreated) return false;
+
+        const attempt = this.getLayout(mode);
+        const ok = await this.buildLayout(attempt);
+        this.log(`Mudança para tela '${mode}' resultou em: ${ok}`);
+
+        // Retornamos true se sucesso. O seu App DEVE chamar pushUiFrame e pushDashboardTexts logo a seguir!
+        return ok;
+    }
+
+    // ========================================================================
+    // 🚀 INICIALIZAÇÃO E EVENTOS
+    // ========================================================================
+
     async init(
         onInput: (event: EvenInputEvent) => void,
-        onActionFocus?: (screen: MenuScreen) => void,
-        onActionExecute?: (screen: MenuScreen) => void,
+        onActionFocus?: (screen: MenuScreen | string) => void,
+        onActionExecute?: (screen: MenuScreen | string) => void,
         onDebugLog?: DebugLogger,
-        initialMode: BridgeUiMode = 'default',
+        initialMode: BridgeUiMode = 'main_menu',
     ): Promise<boolean> {
         this.debugLog = onDebugLog ?? (() => { });
         this.pageCreated = false;
-        this.hasImageContainer = false;
-        this.hasBarsImageContainer = false;
         this.uiMode = initialMode;
+        this.resetAllFocus();
 
         try {
-            this.log('init started');
+            this.log('Conectando aos óculos...');
             const bridgePromise = waitForEvenAppBridge();
-            const timeoutPromise = new Promise<never>((_, reject) => {
-                setTimeout(() => reject(new Error('waitForEvenAppBridge timeout (8s)')), 8000);
-            });
+            const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000));
             this.bridge = await Promise.race([bridgePromise, timeoutPromise]);
-            this.log('waitForEvenAppBridge resolved');
 
-            try {
-                const device = await this.bridge.getDeviceInfo();
-                this.log(
-                    `device: model=${device?.model ?? 'unknown'} sn=${device?.sn ?? 'n/a'} status=${device?.status ?? 'n/a'}`,
-                );
+            // Pausa vital para inicialização a frio do BLE
+            await new Promise(resolve => setTimeout(resolve, 800));
 
-                const user = await this.bridge.getUserInfo();
-                if (user) {
-                    this.log(`user: name=${user.name} country=${user.country}`);
-                }
-            } catch (err) {
-                this.log(`getInfo failed: ${(err as Error).message}`);
-            }
+            const attempt = this.getLayout(this.uiMode);
+            this.pageCreated = await this.buildLayout(attempt);
 
-            for (const attempt of this.buildLayoutAttempts()) {
-                const ok = await this.tryCreateLayout(attempt);
-                if (ok) {
-                    this.pageCreated = true;
-                    break;
-                }
-            }
-
-            if (!this.pageCreated) {
-                this.log('page creation failed; no containers active');
-                return false;
-            }
-
-            this.log(`layout active: hasImageContainer=${this.hasImageContainer}`);
+            if (!this.pageCreated) return false;
 
             this.unsubscribeEvents = this.bridge.onEvenHubEvent((event: any) => {
-                const executeActionSafe = (action: MenuScreen, reason: string): void => {
+                const eventType = parseEventType(event);
+                const isClick = CLICK_EVENTS.has(eventType);
+                const isScrollTop = SCROLL_TOP_EVENTS.has(eventType);
+                const isScrollBottom = SCROLL_BOTTOM_EVENTS.has(eventType);
+                const isDouble = DOUBLE_CLICK_EVENTS.has(eventType);
+                const idx = resolveListIndex(event);
+
+                const executeSafe = (action: string, context: string) => {
                     const now = Date.now();
-                    if (this.lastExecuteAction === action && now - this.lastExecuteAt < 300) {
-                        this.log(`execute skipped (dedupe) action=${action} reason=${reason}`);
-                        return;
-                    }
+                    if (this.lastExecuteAction === action && now - this.lastExecuteAt < 300) return;
                     this.lastExecuteAction = action;
                     this.lastExecuteAt = now;
+                    this.log(`Click [${action}] em [${context}]`);
                     onActionExecute?.(action);
                 };
 
-                const idx = resolveListIndex(event);
-                if (idx !== undefined && this.uiMode === 'egg_selection') {
-                    this.selectedEggIndex = idx;
-                }
-                const selectedName = resolveListName(event);
-                const actionByIndex = normalizeActionByIndex(idx);
-                const actionByName = normalizeActionByName(selectedName);
-                const actionFromEvent = actionByIndex ?? actionByName;
-                if (actionFromEvent) {
-                    this.selectedAction = actionFromEvent;
-                    onActionFocus?.(actionFromEvent);
+                // 1. ATUALIZAÇÃO DO ÍNDICE FOCADO
+                if (idx !== undefined) {
+                    if (this.uiMode === 'main_menu' || this.uiMode === 'default') {
+                        this.selectedMainIndex = Math.max(0, Math.min(2, idx));
+                        onActionFocus?.(ACTIONS[this.selectedMainIndex]);
+                    } else if (this.uiMode === 'egg_selection') {
+                        this.selectedEggIndex = Math.max(0, Math.min(1, idx));
+                    } else if (this.uiMode === 'minigame_selection') {
+                        this.selectedMinigameSelectionIndex = Math.max(0, Math.min(1, idx));
+                    } else if (this.uiMode === 'minigame_start') {
+                        this.selectedMinigameStartIndex = Math.max(0, Math.min(1, idx));
+                    } else if (this.uiMode === 'minigame_choice') {
+                        this.selectedMinigameChoiceIndex = Math.max(0, Math.min(2, idx));
+                    } else if (this.uiMode === 'minigame_result') {
+                        this.selectedMinigameResultIndex = Math.max(0, Math.min(1, idx));
+                    }
                 }
 
-                const eventType = parseEventType(event);
-                if (eventType === undefined || eventType === null) {
-                    if (this.uiMode === 'egg_selection' && isActionsListEvent(event)) {
-                        this.log(`event: undefined(egg-selection) idx=${this.selectedEggIndex}`);
+                // 2. AÇÕES DE CLIQUE
+                if (isClick) {
+                    if (this.uiMode === 'main_menu' || this.uiMode === 'default') {
+                        executeSafe(ACTIONS[this.selectedMainIndex], 'main_menu');
+                    } else if (this.uiMode === 'egg_selection') {
                         onInput(this.selectedEggIndex === 0 ? 'egg_next' : 'egg_confirm');
-                        return;
+                    } else if (this.uiMode === 'minigame_selection') {
+                        onInput(this.selectedMinigameSelectionIndex === 0 ? 'minigame_select_rps' : 'minigame_select_tictactoe');
+                    } else if (this.uiMode === 'minigame_start') {
+                        onInput(this.selectedMinigameStartIndex === 0 ? 'minigame_play' : 'minigame_back');
+                    } else if (this.uiMode === 'minigame_choice') {
+                        const moves = ['rock', 'paper', 'scissors'];
+                        executeSafe(moves[this.selectedMinigameChoiceIndex], 'minigame_choice');
+                    } else if (this.uiMode === 'minigame_result') {
+                        onInput(this.selectedMinigameResultIndex === 0 ? 'minigame_replay' : 'minigame_menu');
                     }
-                    // Mesmo padrao do clock: tratar evento de lista sem eventType como interacao valida.
-                    // Executa somente quando o payload pertence a lista de acoes.
-                    if (isActionsListEvent(event)) {
-                        const action = actionFromEvent ?? this.selectedAction;
-                        this.log(
-                            `event: undefined(list) -> click fallback action=${action} idx=${String(
-                                idx,
-                            )} name=${String(selectedName)}`,
-                        );
-                        executeActionSafe(action, 'undefined-list');
+
+                    if (this.uiMode !== 'minigame_choice') {
                         onInput('click');
-                    } else {
-                        this.log('event: undefined(non-list) ignored');
                     }
                     return;
                 }
-                this.log(`event: ${String(eventType)}`);
 
-                if (SCROLL_TOP_EVENTS.has(eventType)) {
+                // 3. NAVEGAÇÃO SCROLL CIMA
+                if (isScrollTop) {
+                    if (this.uiMode === 'main_menu' || this.uiMode === 'default') {
+                        this.selectedMainIndex = (this.selectedMainIndex - 1 + 3) % 3;
+                        onActionFocus?.(ACTIONS[this.selectedMainIndex]);
+                    } else if (this.uiMode === 'egg_selection') {
+                        this.selectedEggIndex = Math.max(0, this.selectedEggIndex - 1);
+                    } else if (this.uiMode === 'minigame_selection') {
+                        this.selectedMinigameSelectionIndex = (this.selectedMinigameSelectionIndex - 1 + 2) % 2;
+                    } else if (this.uiMode === 'minigame_start') {
+                        this.selectedMinigameStartIndex = Math.max(0, this.selectedMinigameStartIndex - 1);
+                    } else if (this.uiMode === 'minigame_choice') {
+                        this.selectedMinigameChoiceIndex = (this.selectedMinigameChoiceIndex - 1 + 3) % 3;
+                    } else if (this.uiMode === 'minigame_result') {
+                        this.selectedMinigameResultIndex = Math.max(0, this.selectedMinigameResultIndex - 1);
+                    }
                     onInput('scroll_top');
                     return;
                 }
-                if (SCROLL_BOTTOM_EVENTS.has(eventType)) {
+
+                // 4. NAVEGAÇÃO SCROLL BAIXO
+                if (isScrollBottom) {
+                    if (this.uiMode === 'main_menu' || this.uiMode === 'default') {
+                        this.selectedMainIndex = (this.selectedMainIndex + 1) % 3;
+                        onActionFocus?.(ACTIONS[this.selectedMainIndex]);
+                    } else if (this.uiMode === 'egg_selection') {
+                        this.selectedEggIndex = Math.min(1, this.selectedEggIndex + 1);
+                    } else if (this.uiMode === 'minigame_selection') {
+                        this.selectedMinigameSelectionIndex = (this.selectedMinigameSelectionIndex + 1) % 2;
+                    } else if (this.uiMode === 'minigame_start') {
+                        this.selectedMinigameStartIndex = Math.min(1, this.selectedMinigameStartIndex + 1);
+                    } else if (this.uiMode === 'minigame_choice') {
+                        this.selectedMinigameChoiceIndex = (this.selectedMinigameChoiceIndex + 1) % 3;
+                    } else if (this.uiMode === 'minigame_result') {
+                        this.selectedMinigameResultIndex = Math.min(1, this.selectedMinigameResultIndex + 1);
+                    }
                     onInput('scroll_bottom');
                     return;
                 }
-                if (CLICK_EVENTS.has(eventType)) {
-                    if (this.uiMode === 'egg_selection') {
-                        this.log(`event: click(egg-selection) idx=${this.selectedEggIndex}`);
-                        onInput(this.selectedEggIndex === 0 ? 'egg_next' : 'egg_confirm');
-                        return;
-                    }
-                    const action = actionFromEvent ?? this.selectedAction;
-                    executeActionSafe(action, `click-event:${String(eventType)}`);
-                    onInput('click');
-                    return;
-                }
-                if (DOUBLE_CLICK_EVENTS.has(eventType)) {
-                    // Double click so navega/volta; nao executa acao de menu.
-                    onInput('double_click');
-                }
+
+                if (isDouble) onInput('double_click');
             });
 
-            this.log('init completed with active containers');
             return true;
         } catch (err) {
             this.bridge = null;
-            this.pageCreated = false;
-            this.hasImageContainer = false;
-            this.hasBarsImageContainer = false;
-            this.log(`init failed: ${(err as Error).message}`);
             return false;
-        }
-    }
-
-    async setEggSelectionMode(active: boolean): Promise<void> {
-        this.uiMode = active ? 'egg_selection' : 'default';
-        this.resetFocus();
-        if (!this.bridge || !this.pageCreated) return;
-        const preferred = this.buildLayoutAttempts()[0];
-        const ok = await this.bridge.rebuildPageContainer(new RebuildPageContainer(preferred.payload));
-        this.log(`setEggSelectionMode rebuild result=${String(ok)} active=${active}`);
-        if (ok) {
-            this.pageCreated = true;
-            this.hasImageContainer = preferred.hasImage;
-            this.hasBarsImageContainer = preferred.hasBarsImage;
         }
     }
 
     async setActionLabels(labels: [string, string, string]): Promise<void> {
         if (!this.bridge || !this.pageCreated) return;
-        const normalized: [string, string, string] = [
+        this.actionLabels = [
             (labels[0] || 'FEED').slice(0, 12),
             (labels[1] || 'PLAY').slice(0, 12),
             (labels[2] || 'CLEAN').slice(0, 12),
         ];
-        if (
-            this.actionLabels[0] === normalized[0] &&
-            this.actionLabels[1] === normalized[1] &&
-            this.actionLabels[2] === normalized[2]
-        ) {
-            return;
-        }
 
-        this.actionLabels = normalized;
-        this.resetFocus();
-        const preferred = this.buildLayoutAttempts().find((a) => a.name === 'full(list-capture)')
-            ?? this.buildLayoutAttempts()[0];
-        const ok = await this.bridge.rebuildPageContainer(new RebuildPageContainer(preferred.payload));
-        this.log(`setActionLabels rebuild result=${String(ok)} labels=${normalized.join('/')}`);
-        if (ok) {
-            this.pageCreated = true;
-            this.hasImageContainer = preferred.hasImage;
+        if (this.uiMode === 'main_menu' || this.uiMode === 'default') {
+            const attempt = this.getLayout('main_menu');
+            await this.buildLayout(attempt);
         }
     }
 
-    async pushUiFrame(imageData: number[]): Promise<boolean> {
-        if (!this.bridge || !this.pageCreated) {
-            this.log(`pushUiFrame skipped: bridge=${Boolean(this.bridge)} pageCreated=${this.pageCreated}`);
-            return false;
-        }
-        if (!this.hasImageContainer) {
-            this.log('pushUiFrame skipped: active page has no image container');
-            return false;
-        }
+    // ========================================================================
+    // 🖼️ ATUALIZAÇÕES VISUAIS
+    // ========================================================================
 
-        const result = await this.enqueueImageUpdate(1, 'petImg', imageData, 'pushUiFrame');
-        this.imagePushCount += 1;
-        this.log(`pushUiFrame #${this.imagePushCount}: bytes=${imageData.length} result=${String(result)}`);
-        return result === 0 || result === true || result === 'success';
-    }
-
-    async pushLifeBarFrame(imageData: number[]): Promise<boolean> {
-        if (!this.bridge || !this.pageCreated) {
-            this.log(`pushLifeBarFrame skipped: bridge=${Boolean(this.bridge)} pageCreated=${this.pageCreated}`);
-            return false;
-        }
-        if (!this.hasImageContainer) {
-            this.log('pushLifeBarFrame skipped: active page has no image container');
-            return false;
-        }
-        if (!this.hasBarsImageContainer) {
-            this.log('pushLifeBarFrame skipped: active page has no bars image container');
-            return false;
-        }
-
-        const result = await this.enqueueImageUpdate(4, 'lifeBarImg', imageData, 'pushLifeBarFrame');
-        this.log(`pushLifeBarFrame: bytes=${imageData.length} result=${String(result)}`);
-        return result === 0 || result === true || result === 'success';
-    }
-
-    private async enqueueImageUpdate(
-        containerID: number,
-        containerName: string,
-        imageData: number[],
-        source: string,
-    ): Promise<unknown> {
-        const run = async (): Promise<unknown> => {
+    private async enqueueImageUpdate(containerID: number, containerName: string, imageData: number[] | Uint8Array): Promise<boolean> {
+        const run = async (): Promise<boolean> => {
             if (!this.bridge) return false;
-            const result = await this.bridge.updateImageRawData(
-                new ImageRawDataUpdate({
-                    containerID,
-                    containerName,
-                    imageData,
-                }),
-            );
-            this.log(`${source} updateImageRawData container=${containerName} result=${String(result)}`);
-            return result;
+            try {
+                const safeImageArray = Array.isArray(imageData) ? imageData : Array.from(imageData);
+                const req = new ImageRawDataUpdate({ containerID, containerName, imageData: safeImageArray });
+                await this.bridge.updateImageRawData(req as any);
+                await new Promise(resolve => setTimeout(resolve, 150)); // Proteção Bluetooth vital
+                return true;
+            } catch { return false; }
         };
-
         const next = this.imageUpdateQueue.then(run, run);
-        this.imageUpdateQueue = next.then(
-            () => true,
-            () => true,
-        );
-        return next;
+        this.imageUpdateQueue = next.then(() => true, () => true);
+        return next as any;
     }
 
-    async pushDashboardTexts(
-        state: TamagotchiState,
-        hint?: string,
-        dialogMode = false,
-        nowMs = Date.now(),
-    ): Promise<void> {
-        if (!this.bridge || !this.pageCreated) {
-            this.log(`pushDashboardTexts skipped: bridge=${Boolean(this.bridge)} pageCreated=${this.pageCreated}`);
-            return;
+    async pushUiFrame(imageData: number[] | Uint8Array): Promise<boolean> {
+        if (!this.bridge || !this.pageCreated || !this.hasImageContainer) return false;
+        return this.enqueueImageUpdate(1, 'petImg', imageData);
+    }
+
+    pushLifeBarFrame(imageData: number[] | Uint8Array): Promise<boolean> {
+        if (!this.bridge || !this.pageCreated || !this.hasBarsImageContainer) return Promise.resolve(false);
+        return this.enqueueImageUpdate(4, 'lifeBarImg', imageData);
+    }
+
+    hasBarsImage(): boolean {
+        return this.hasBarsImageContainer;
+    }
+
+    hasPetImage(): boolean {
+        return this.hasImageContainer;
+    }
+
+    async pushDashboardTexts(state: TamagotchiState, textOverwrite?: string): Promise<void> {
+        if (!this.bridge || !this.pageCreated) return;
+
+        let content = textOverwrite;
+        if (!content) {
+            const nowMs = Date.now();
+            const elapsedSecs = Math.floor((nowMs - (state.lastTickAt ?? nowMs)) / 1000);
+            const totalSeconds = (state.ageMinutes ?? 0) * 60 + Math.max(0, elapsedSecs);
+
+            const h = Math.floor(totalSeconds / 3600);
+            const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+            const s = String(totalSeconds % 60).padStart(2, '0');
+
+            const status = !state.isAlive ? 'DEAD' : state.isSick ? 'SICK' : state.health >= 70 ? 'GOOD' : 'OK';
+            content = `NAME: G2 PET\nAGE: ${h}:${m}:${s}\nSTATUS: ${status}`;
         }
 
-        const safeName = (state.petName || 'G2 PET').slice(0, 12).toUpperCase();
-        const baseSeconds = Math.max(0, state.ageMinutes * 60);
-        const liveSeconds = Math.max(0, Math.floor((nowMs - state.lastTickAt) / 1000));
-        const totalSeconds = baseSeconds + liveSeconds;
-        const ageHours = Math.floor(totalSeconds / 3600);
-        const ageMinutes = Math.floor((totalSeconds % 3600) / 60);
-        const ageSeconds = totalSeconds % 60;
-        const status = !state.isAlive ? 'DEAD' : state.isSick ? 'SICK' : state.health >= 70 ? 'GOOD' : 'OK';
-        const safeHint = (hint ?? '').trim();
-        const toShortLines = (value: string, maxChars = 24, maxLines = 7): string[] => {
-            if (!value) return [];
-            const words = value.replace(/\s+/g, ' ').trim().split(' ');
-            const lines: string[] = [];
-            let current = '';
-            for (const word of words) {
-                if (!word) continue;
-                const candidate = current ? `${current} ${word}` : word;
-                if (candidate.length <= maxChars) {
-                    current = candidate;
-                } else {
-                    if (current) lines.push(current);
-                    current = word.length > maxChars ? word.slice(0, maxChars) : word;
-                    if (lines.length >= maxLines) break;
-                }
-                if (lines.length >= maxLines) break;
-            }
-            if (current && lines.length < maxLines) lines.push(current);
-            return lines.slice(0, maxLines);
-        };
-
-        const content = dialogMode
-            ? [
-                'MINIGAME',
-                ...toShortLines(safeHint),
-            ].join('\n')
-            : `NAME: ${safeName}\n` +
-            `AGE: ${ageHours}:${String(ageMinutes).padStart(2, '0')}:${String(ageSeconds).padStart(2, '0')}\n` +
-            `STATUS: ${status}` +
-            (safeHint ? `\n> ${toShortLines(safeHint, 26, 2).join('\n> ')}` : '');
-
-        const result = await this.bridge.textContainerUpgrade(
-            new TextContainerUpgrade({
-                containerID: 2,
-                containerName: 'statsText',
-                content,
-            }),
-        );
-
-        this.textPushCount += 1;
-        if (this.textPushCount <= 3 || this.textPushCount % 10 === 0) {
-            this.log(`pushDashboardTexts #${this.textPushCount}: result=${String(result)}`);
-        }
+        await this.bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: 2, containerName: 'statsText', content }) as any);
     }
 
     destroy(): void {
-        this.log('destroy called');
         this.unsubscribeEvents?.();
         this.unsubscribeEvents = null;
-
-        if (this.bridge) {
-            this.bridge
-                .shutDownPageContainer(0)
-                .then((ok: boolean) => this.log(`shutDownPageContainer result=${String(ok)}`))
-                .catch((err: Error) => this.log(`shutDownPageContainer failed: ${err.message}`));
-        }
+        this.bridge?.shutDownPageContainer(0).catch(() => { });
     }
 }
-
-
-
-
-
